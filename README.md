@@ -29,22 +29,32 @@ Before you can use this application, you'll need:
 
 ### Step 2: Configure the Application
 
-1. Open `main.go` in your text editor
-2. Find these lines:
-   ```go
-   const (
-       spotifyAuthURL   = "https://accounts.spotify.com/api/token"
-       spotifySearchURL = "https://api.spotify.com/v1/search"
-       clientID         = "YOUR_CLIENT_ID"
-       clientSecret     = "YOUR_CLIENT_SECRET"
-   )
-   ```
-3. Replace `YOUR_CLIENT_ID` with your actual Client ID
-4. Replace `YOUR_CLIENT_SECRET` with your actual Client Secret
+Copy the example environment file and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and replace the placeholder values:
+
+```dotenv
+SPOTIFY_CLIENT_ID=your_actual_client_id
+SPOTIFY_CLIENT_SECRET=your_actual_client_secret
+```
+
+Alternatively, export the variables directly in your shell:
+
+```bash
+export SPOTIFY_CLIENT_ID="your_actual_client_id"
+export SPOTIFY_CLIENT_SECRET="your_actual_client_secret"
+```
+
+> **Note:** Never commit your `.env` file to version control. It is already listed in `.gitignore`.
 
 ### Step 3: Build the Application
 
 ```bash
+go mod download
 go build -o classical
 ```
 
@@ -187,4 +197,3 @@ This project is provided as-is for educational and personal use.
 For issues with the Spotify API, visit the [Spotify Developer Community](https://developer.spotify.com/community).
 
 For Go-related questions, check out the [Go FAQ](https://golang.org/doc/faq).
-
