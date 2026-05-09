@@ -259,6 +259,94 @@ func TestBrowseRecordingsByWork_ParsesAndSendsParams(t *testing.T) {
 	}
 }
 
+func TestResolveComposerMBID(t *testing.T) {
+	// Mirrors the live shape for "Rimsky-Korsakov": top result is a
+	// Group ("Rimsky-Korsakov Quartet"); next is Maria (Person, "daughter
+	// of the composer", score 99); then the actual composer Nikolai
+	// (Person, "Russian composer", score 94). Resolver must skip the
+	// Group AND skip Maria (relative-of-composer) and land on Nikolai.
+	const canned = `{
+  "artists": [
+    {"id": "quartet-id",  "name": "Rimsky-Korsakov Quartet",  "score": 100, "type": "Group",  "disambiguation": ""},
+    {"id": "maria-id",    "name": "Maria Rimsky-Korsakov",    "score": 99,  "type": "Person", "disambiguation": "daughter of the composer"},
+    {"id": "composer-id", "name": "Nikolai Rimsky-Korsakov",  "score": 94,  "type": "Person", "disambiguation": "Russian composer"},
+    {"id": "andrey-id",   "name": "Andrey Rimsky-Korsakov",   "score": 73,  "type": "Person", "disambiguation": "musicologist, son of the composer"}
+  ]
+}`
+	t.Run("picks the Person whose disambiguation marks them a composer", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := r.URL.Query().Get("query"); got != "Rimsky Korsakov" {
+				t.Errorf("query param = %q", got)
+			}
+			w.Write([]byte(canned))
+		}))
+		defer server.Close()
+		got, err := resolveComposerMBID(server.URL, "Rimsky Korsakov")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "composer-id" {
+			t.Errorf("got %q, want composer-id (Maria's 'daughter of the composer' must not match)", got)
+		}
+	})
+
+	t.Run("returns empty when no Person has a composer-disambiguation", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{"artists":[
+                {"id":"g1","name":"Some Quartet","score":100,"type":"Group"},
+                {"id":"p1","name":"Some Soprano","score":90,"type":"Person","disambiguation":"soprano"},
+                {"id":"o1","name":"Some Orchestra","score":80,"type":"Orchestra"}
+            ]}`))
+		}))
+		defer server.Close()
+		got, err := resolveComposerMBID(server.URL, "anything")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "" {
+			t.Errorf("got %q, want empty (no Person tagged as composer)", got)
+		}
+	})
+
+	t.Run("empty input returns empty with no HTTP call", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("HTTP call should not be made for empty input")
+		}))
+		defer server.Close()
+		got, err := resolveComposerMBID(server.URL, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "" {
+			t.Errorf("got %q, want empty", got)
+		}
+	})
+}
+
+func TestIsComposerDisambiguation(t *testing.T) {
+	cases := []struct {
+		s    string
+		want bool
+	}{
+		{"Russian composer", true},
+		{"classical composer", true},
+		{"composer", true},
+		{"German composer, organist", true},
+		{"Baroque composer (1685–1750)", true},
+		{"daughter of the composer", false},
+		{"musicologist, son of the composer", false},
+		{"wife of the composer", false},
+		{"soprano", false},
+		{"", false},
+		{"musicologist", false},
+	}
+	for _, c := range cases {
+		if got := isComposerDisambiguation(c.s); got != c.want {
+			t.Errorf("isComposerDisambiguation(%q) = %v, want %v", c.s, got, c.want)
+		}
+	}
+}
+
 func TestLookupWorkOtherVersions_ParsesAndFilters(t *testing.T) {
 	// Mixed relations: composer, parts, performance, and two "other
 	// version" links. Only the other-version targets should come back.

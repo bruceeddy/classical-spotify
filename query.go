@@ -1,9 +1,6 @@
 package main
 
-import (
-	"fmt"
-	"strings"
-)
+import "strings"
 
 // parseQueryArgs splits the user's shell args into a (composer, work)
 // pair. Multiple args: the first is the composer, the rest joined is
@@ -36,14 +33,21 @@ func parseQueryArgs(args []string) (composer, work string) {
 // the indexed title and misses canonical titles whose word-order or
 // language differs (e.g. "h-Moll-Messe" for Bach's Mass in B minor),
 // while AND requires every word but tolerates surrounding tokens.
-func buildQuery(args []string) string {
+//
+// If composerMBID is non-empty, it's used as `arid:<MBID>` in place of
+// `artist:<name>`. The arid field bypasses MB's name-matching entirely,
+// which is the only way to reach works whose artist is stored under a
+// non-Latin canonical name (e.g. Rimsky-Korsakov in Cyrillic).
+func buildQuery(args []string, composerMBID string) string {
 	composer, work := parseQueryArgs(args)
 	if work == "" {
 		return composer
 	}
-	return fmt.Sprintf(`artist:%s AND work:%s`,
-		luceneAndGroup(sanitizeLucene(composer)),
-		luceneAndGroup(sanitizeLucene(work)))
+	artistClause := "artist:" + luceneAndGroup(sanitizeLucene(composer))
+	if composerMBID != "" {
+		artistClause = "arid:" + composerMBID
+	}
+	return artistClause + " AND work:" + luceneAndGroup(sanitizeLucene(work))
 }
 
 // luceneAndGroup joins the words in s with AND and wraps them in parens

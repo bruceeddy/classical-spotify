@@ -37,7 +37,15 @@ func main() {
 	}
 
 	composer, work := parseQueryArgs(args)
-	query := buildQuery(args)
+	composerMBID := ""
+	if composer != "" && work != "" {
+		var err error
+		composerMBID, err = resolveComposerMBID(musicBrainzArtistURL, composer)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Note: composer MBID resolution failed (%v), using free-text artist field\n", err)
+		}
+	}
+	query := buildQuery(args, composerMBID)
 	fmt.Printf("Searching MusicBrainz: %s\n\n", query)
 
 	works, err := searchWorks(musicBrainzWorkURL, query)

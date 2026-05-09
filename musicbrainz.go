@@ -14,6 +14,7 @@ import (
 const (
 	musicBrainzWorkURL      = "https://musicbrainz.org/ws/2/work/"
 	musicBrainzRecordingURL = "https://musicbrainz.org/ws/2/recording"
+	musicBrainzArtistURL    = "https://musicbrainz.org/ws/2/artist/"
 	userAgent               = "classical/0.1 ( eddy.bruce@gmail.com )"
 )
 
@@ -119,6 +120,82 @@ func browseRecordingsByWork(baseURL, workID string) ([]Recording, error) {
 		return nil, err
 	}
 	return resp.Recordings, nil
+}
+
+type ArtistRef struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Score          int    `json:"score"`
+	Type           string `json:"type"`
+	Disambiguation string `json:"disambiguation"`
+}
+
+type ArtistSearchResponse struct {
+	Artists []ArtistRef `json:"artists"`
+}
+
+// resolveComposerMBID searches MusicBrainz for an artist matching the
+// given name and returns the MBID of the highest-scoring Person whose
+// disambiguation marks them as a composer. Returns "" when no such
+// candidate exists in the top 5 hits.
+//
+// Two filters are necessary to land on the right artist for composers
+// like Rimsky-Korsakov:
+//
+//   - Group/Orchestra/Choir artists (e.g. "Rimsky-Korsakov Quartet")
+//     are skipped — the Type=Person filter handles that.
+//   - Persons related to the composer (e.g. "Maria Rimsky-Korsakov,
+//     daughter of the composer") often outscore the composer themselves
+//     in MB's ranking. The disambiguation check ("composer" yes,
+//     "the composer" / "of composer" no) discriminates the actual
+//     composer from their relatives.
+//
+// Composer resolution lets us substitute `arid:<MBID>` for `artist:<name>`
+// in the work search, which works around MB's index not following Latin
+// aliases on the work-search artist field — important for composers
+// stored under their non-Latin canonical name (Cyrillic for Russians,
+// for example).
+func resolveComposerMBID(baseURL, name string) (string, error) {
+	if name == "" {
+		return "", nil
+	}
+	params := url.Values{}
+	params.Add("query", name)
+	params.Add("fmt", "json")
+	params.Add("limit", "5")
+
+	var resp ArtistSearchResponse
+	if err := mbGet(baseURL+"?"+params.Encode(), &resp); err != nil {
+		return "", err
+	}
+	for _, a := range resp.Artists {
+		if a.Type == "Person" && isComposerDisambiguation(a.Disambiguation) {
+			return a.ID, nil
+		}
+	}
+	return "", nil
+}
+
+// isComposerDisambiguation returns true if a MusicBrainz disambiguation
+// string identifies its artist as a composer rather than a relative or
+// other adjacent role. The pattern: contains "composer" but not as
+// "<relation> of the composer" / "of composer X". Examples:
+//
+//	"Russian composer"           -> true
+//	"classical composer"         -> true
+//	"composer"                   -> true
+//	"daughter of the composer"   -> false
+//	"musicologist, son of the composer" -> false
+//	"soprano"                    -> false
+func isComposerDisambiguation(s string) bool {
+	s = strings.ToLower(s)
+	if !strings.Contains(s, "composer") {
+		return false
+	}
+	if strings.Contains(s, "the composer") || strings.Contains(s, "of composer") {
+		return false
+	}
+	return true
 }
 
 // lookupWorkOtherVersions fetches a single Work with `inc=work-rels` and
