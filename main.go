@@ -141,6 +141,9 @@ func displayPerformances(performances []Performance) {
 		if len(p.Soloists) > 0 {
 			fmt.Printf("   Soloists:  %s\n", strings.Join(p.Soloists, ", "))
 		}
+		if p.Label != "" {
+			fmt.Printf("   Label:     %s\n", p.Label)
+		}
 		if p.SpotifyURL != "" {
 			fmt.Printf("   Spotify:   %s\n", p.SpotifyURL)
 		}

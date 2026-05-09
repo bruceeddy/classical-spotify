@@ -14,9 +14,11 @@ import (
 const (
 	spotifyAuthURL   = "https://accounts.spotify.com/api/token"
 	spotifySearchURL = "https://api.spotify.com/v1/search"
+	spotifyAlbumsURL = "https://api.spotify.com/v1/albums"
 )
 
 type SpotifyAlbum struct {
+	ID           string              `json:"id"`
 	Name         string              `json:"name"`
 	ExternalURLs SpotifyExternalURLs `json:"external_urls"`
 	Artists      []SpotifyArtistRef  `json:"artists"`
@@ -157,6 +159,59 @@ func bestMatchingAlbum(albums []SpotifyAlbum, p Performance) (SpotifyAlbum, bool
 	return best, true
 }
 
+// getSpotifyAlbumLabels batch-fetches the `label` field for up to 20
+// Spotify album IDs in a single call (`GET /v1/albums?ids=…`). Returns
+// a map keyed on album ID. Empty input is a no-op (no HTTP call).
+//
+// The simplified album object returned by /v1/search doesn't include
+// `label`, so we need this follow-up lookup to get record-label
+// metadata onto each performance.
+func getSpotifyAlbumLabels(albumsURL, token string, ids []string) (map[string]string, error) {
+	if len(ids) == 0 {
+		return map[string]string{}, nil
+	}
+	if len(ids) > 20 {
+		ids = ids[:20]
+	}
+	params := url.Values{}
+	params.Add("ids", strings.Join(ids, ","))
+
+	req, err := http.NewRequest("GET", albumsURL+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("spotify album lookup failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var r struct {
+		Albums []struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+		} `json:"albums"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(r.Albums))
+	for _, a := range r.Albums {
+		out[a.ID] = a.Label
+	}
+	return out, nil
+}
+
 // spotifyQueryFor builds an album-search query from the user's
 // composer/work plus a Performance's distinguishing fields. Empty
 // fields are skipped so a partial Performance still gets a sensible
@@ -199,6 +254,27 @@ func fillSpotifyURLs(performances []Performance, composer, work string) error {
 		}
 		if best, ok := bestMatchingAlbum(albums, performances[i]); ok {
 			performances[i].SpotifyURL = best.ExternalURLs.Spotify
+			performances[i].SpotifyAlbumID = best.ID
+		}
+	}
+
+	// Batch-fetch record labels for every album we attached.
+	var ids []string
+	for _, p := range performances {
+		if p.SpotifyAlbumID != "" {
+			ids = append(ids, p.SpotifyAlbumID)
+		}
+	}
+	if len(ids) > 0 {
+		labels, err := getSpotifyAlbumLabels(spotifyAlbumsURL, token, ids)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Spotify album label lookup failed: %v\n", err)
+		} else {
+			for i := range performances {
+				if l, ok := labels[performances[i].SpotifyAlbumID]; ok {
+					performances[i].Label = l
+				}
+			}
 		}
 	}
 	return nil

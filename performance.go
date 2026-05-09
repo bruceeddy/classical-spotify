@@ -14,12 +14,14 @@ import (
 // it stays empty when no MB-supplied URL is present (the Spotify-search
 // fallback fills it in later).
 type Performance struct {
-	Conductor  string
-	Orchestra  string
-	Year       string
-	Choirs     []string
-	Soloists   []string
-	SpotifyURL string
+	Conductor      string
+	Orchestra      string
+	Year           string
+	Choirs         []string
+	Soloists       []string
+	SpotifyURL     string
+	SpotifyAlbumID string // populated alongside SpotifyURL; used for the label lookup
+	Label          string // record label, populated by the Spotify album-detail call
 }
 
 // choirNameRegex matches strings that look like a choir or vocal
@@ -97,7 +99,14 @@ func groupRecordings(recs []Recording) []Performance {
 		k := key{conductor, orchestra, year}
 		p, ok := byKey[k]
 		if !ok {
-			byKey[k] = &Performance{conductor, orchestra, year, choirs, soloists, spotifyURL}
+			byKey[k] = &Performance{
+				Conductor:  conductor,
+				Orchestra:  orchestra,
+				Year:       year,
+				Choirs:     choirs,
+				Soloists:   soloists,
+				SpotifyURL: spotifyURL,
+			}
 			order = append(order, k)
 			continue
 		}

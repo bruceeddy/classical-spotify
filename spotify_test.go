@@ -253,6 +253,69 @@ func TestBestMatchingAlbum(t *testing.T) {
 	})
 }
 
+func TestGetSpotifyAlbumLabels_BatchLookup(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q", got)
+		}
+		if got := r.URL.Query().Get("ids"); got != "id1,id2,id3" {
+			t.Errorf("ids = %q, want comma-joined", got)
+		}
+		w.Write([]byte(`{
+            "albums": [
+                {"id": "id1", "label": "Deutsche Grammophon"},
+                {"id": "id2", "label": "Harmonia Mundi"},
+                {"id": "id3", "label": ""}
+            ]
+        }`))
+	}))
+	defer server.Close()
+
+	labels, err := getSpotifyAlbumLabels(server.URL, "test-token", []string{"id1", "id2", "id3"})
+	if err != nil {
+		t.Fatalf("getSpotifyAlbumLabels: %v", err)
+	}
+	if labels["id1"] != "Deutsche Grammophon" {
+		t.Errorf("labels[id1] = %q", labels["id1"])
+	}
+	if labels["id2"] != "Harmonia Mundi" {
+		t.Errorf("labels[id2] = %q", labels["id2"])
+	}
+	if _, ok := labels["id3"]; !ok {
+		t.Errorf("labels[id3] missing entirely; want present-but-empty")
+	}
+	if labels["id3"] != "" {
+		t.Errorf("labels[id3] = %q, want empty string", labels["id3"])
+	}
+}
+
+func TestGetSpotifyAlbumLabels_EmptyInputMakesNoCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("HTTP request should not be made when ids is empty")
+	}))
+	defer server.Close()
+
+	labels, err := getSpotifyAlbumLabels(server.URL, "test-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(labels) != 0 {
+		t.Errorf("expected empty map, got %v", labels)
+	}
+}
+
+func TestGetSpotifyAlbumLabels_NonOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"bad token"}`))
+	}))
+	defer server.Close()
+
+	if _, err := getSpotifyAlbumLabels(server.URL, "expired", []string{"id1"}); err == nil {
+		t.Fatal("expected error on 401, got nil")
+	}
+}
+
 func TestSpotifyQueryFor(t *testing.T) {
 	tests := []struct {
 		name     string
