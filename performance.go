@@ -1,23 +1,62 @@
 package main
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 )
 
 // Performance is one distinct recording of a Work, identified by the
-// (conductor, orchestra, year) fingerprint. Vocals collects every choir
-// or vocal-soloist credit seen across the recordings that share the
-// fingerprint. SpotifyURL holds the first Spotify URL surfaced via
-// MusicBrainz `url-rels` on any of the grouped recordings; it stays
-// empty when no MB-supplied URL is present (the Spotify-search
+// (conductor, orchestra, year) fingerprint. Choirs and Soloists split
+// the credits MusicBrainz tags as `vocal` (which conflates both) using
+// a name-pattern heuristic. SpotifyURL holds the first Spotify URL
+// surfaced via MusicBrainz `url-rels` on any of the grouped recordings;
+// it stays empty when no MB-supplied URL is present (the Spotify-search
 // fallback fills it in later).
 type Performance struct {
 	Conductor  string
 	Orchestra  string
 	Year       string
-	Vocals     []string
+	Choirs     []string
+	Soloists   []string
 	SpotifyURL string
+}
+
+// choirNameRegex matches strings that look like a choir or vocal
+// ensemble. It's a heuristic over common naming patterns in classical
+// performance credits — multilingual keywords (Choir / Chor /
+// Kantorei / Singverein / Kammerchor / Coro / Choeur / Chorale /
+// Cappella / Consort / Cathedral / Singers / Voices / Ensemble) plus
+// the bare word "chor" which appears in many German names.
+//
+// The MB-correct alternative would be a follow-up artist lookup to
+// check the entity's `type` (Person vs Choir/Group), but that means
+// one extra API call per vocal credit per recording — too expensive
+// for the value it adds.
+var choirNameRegex = regexp.MustCompile(`(?i)\b(choir|chorus|chorale|choeur|chor|kantorei|singverein|kammerchor|singers|voices|cathedral|coro|coral|cappella|consort|ensemble)\b`)
+
+// isChoir applies the heuristic. Empty input returns false.
+func isChoir(name string) bool {
+	if name == "" {
+		return false
+	}
+	return choirNameRegex.MatchString(name)
+}
+
+// mergeUnique appends items from `incoming` to `dst` preserving order
+// and skipping any duplicates already present.
+func mergeUnique(dst, incoming []string) []string {
+	seen := make(map[string]bool, len(dst))
+	for _, s := range dst {
+		seen[s] = true
+	}
+	for _, s := range incoming {
+		if !seen[s] {
+			dst = append(dst, s)
+			seen[s] = true
+		}
+	}
+	return dst
 }
 
 // groupRecordings deduplicates a list of recordings into Performances by
@@ -31,7 +70,7 @@ func groupRecordings(recs []Recording) []Performance {
 	var order []key
 	for _, r := range recs {
 		var conductor, orchestra, spotifyURL string
-		var vocals []string
+		var choirs, soloists []string
 		for _, rel := range r.Relations {
 			if rel.Artist != nil {
 				switch rel.Type {
@@ -40,7 +79,11 @@ func groupRecordings(recs []Recording) []Performance {
 				case "performing orchestra":
 					orchestra = rel.Artist.Name
 				case "vocal":
-					vocals = append(vocals, rel.Artist.Name)
+					if isChoir(rel.Artist.Name) {
+						choirs = append(choirs, rel.Artist.Name)
+					} else {
+						soloists = append(soloists, rel.Artist.Name)
+					}
 				}
 			}
 			if rel.URL != nil && spotifyURL == "" && strings.Contains(rel.URL.Resource, "spotify.com") {
@@ -54,20 +97,12 @@ func groupRecordings(recs []Recording) []Performance {
 		k := key{conductor, orchestra, year}
 		p, ok := byKey[k]
 		if !ok {
-			byKey[k] = &Performance{conductor, orchestra, year, vocals, spotifyURL}
+			byKey[k] = &Performance{conductor, orchestra, year, choirs, soloists, spotifyURL}
 			order = append(order, k)
 			continue
 		}
-		seen := make(map[string]bool, len(p.Vocals))
-		for _, v := range p.Vocals {
-			seen[v] = true
-		}
-		for _, v := range vocals {
-			if !seen[v] {
-				p.Vocals = append(p.Vocals, v)
-				seen[v] = true
-			}
-		}
+		p.Choirs = mergeUnique(p.Choirs, choirs)
+		p.Soloists = mergeUnique(p.Soloists, soloists)
 		if p.SpotifyURL == "" && spotifyURL != "" {
 			p.SpotifyURL = spotifyURL
 		}

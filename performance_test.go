@@ -5,6 +5,53 @@ import (
 	"testing"
 )
 
+func TestIsChoir(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		// Choirs (multilingual)
+		{"Vienna Singverein", true},
+		{"RIAS Kammerchor", true},
+		{"Chor des Bayerischen Rundfunks", true},
+		{"Gächinger Kantorei Stuttgart", true},
+		{"Monteverdi Choir", true},
+		{"Westminster Cathedral Choir", true},
+		{"Coro della RAI", true},
+		{"Choeur de Radio France", true},
+		{"The Hilliard Ensemble", true},
+		{"The King's Singers", true},
+		{"Cappella Amsterdam", true},
+
+		// Individual soloists
+		{"Edith Mathis", false},
+		{"Markus Brutscher", false},
+		{"Stella Doufexis", false},
+		{"Hans-Georg Wimmer", false},
+		{"Veronika Winter", false},
+
+		// Edge cases
+		{"", false},
+		// "chord" must NOT match "chor" (word-boundary regex)
+		{"Chord Sextet", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isChoir(tt.name); got != tt.want {
+				t.Errorf("isChoir(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMergeUnique(t *testing.T) {
+	got := mergeUnique([]string{"a", "b"}, []string{"b", "c", "a", "d"})
+	want := []string{"a", "b", "c", "d"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("mergeUnique = %v, want %v", got, want)
+	}
+}
+
 func TestGroupRecordings(t *testing.T) {
 	// Two recordings share a (Karajan / Berlin Phil / 1980) fingerprint
 	// with different vocal credits per movement, exercising the merge
@@ -67,11 +114,14 @@ func TestGroupRecordings(t *testing.T) {
 		t.Errorf("got[2] = %+v, want empty conductor and year", got[2])
 	}
 
-	// Karajan's two movements should have merged vocals: Vienna Singverein
-	// from the Kyrie plus Edith Mathis from the Gloria, in first-seen order.
-	want := []string{"Vienna Singverein", "Edith Mathis"}
-	if !reflect.DeepEqual(got[1].Vocals, want) {
-		t.Errorf("got[1].Vocals = %v, want %v", got[1].Vocals, want)
+	// Karajan's two movements should split into Choirs (Vienna Singverein
+	// matches the choir-name heuristic) and Soloists (Edith Mathis does
+	// not). Vocal credits are merged across the grouped recordings.
+	if !reflect.DeepEqual(got[1].Choirs, []string{"Vienna Singverein"}) {
+		t.Errorf("got[1].Choirs = %v, want [Vienna Singverein]", got[1].Choirs)
+	}
+	if !reflect.DeepEqual(got[1].Soloists, []string{"Edith Mathis"}) {
+		t.Errorf("got[1].Soloists = %v, want [Edith Mathis]", got[1].Soloists)
 	}
 
 	if got[1].Orchestra != "Berlin Philharmonic" {
