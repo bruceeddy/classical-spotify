@@ -57,12 +57,29 @@ func luceneAndGroup(s string) string {
 	return "(" + strings.Join(words, " AND ") + ")"
 }
 
-// sanitizeLucene removes characters from user input that have special
-// meaning in Lucene queries and would otherwise break our `field:(...)`
-// wrapping.
+// sanitizeLucene replaces every Lucene-special character in s with a
+// single space and collapses runs of whitespace. The replacement
+// preserves word boundaries — important for hyphenated composer names
+// like "Rimsky-Korsakov" or "Saint-Saëns", where a bare hyphen is
+// Lucene's NOT operator and would otherwise turn `artist:Rimsky-Korsakov`
+// into "Rimsky NOT Korsakov" and return zero results.
+//
+// The full set of Lucene-special characters is:
+//
+//	+ - && || ! ( ) { } [ ] ^ " ~ * ? : \ /
+//
+// We treat each as whitespace; word-level operators (AND / OR / NOT in
+// uppercase) are left alone since users don't typically type them.
 func sanitizeLucene(s string) string {
-	for _, c := range []string{`"`, `(`, `)`} {
-		s = strings.ReplaceAll(s, c, "")
+	const specials = `"()-+!^~*?:\/{}[]&|`
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if strings.ContainsRune(specials, r) {
+			b.WriteRune(' ')
+		} else {
+			b.WriteRune(r)
+		}
 	}
-	return s
+	return strings.Join(strings.Fields(b.String()), " ")
 }

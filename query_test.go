@@ -67,6 +67,21 @@ func TestBuildQuery(t *testing.T) {
 			args: []string{"Mozart", `Great "Mass" (extra) in C`},
 			want: `artist:Mozart AND work:(Great AND Mass AND extra AND in AND C)`,
 		},
+		{
+			name: "hyphenated composer (Rimsky-Korsakov) splits cleanly",
+			args: []string{"Rimsky-Korsakov", "Scheherazade"},
+			want: `artist:(Rimsky AND Korsakov) AND work:Scheherazade`,
+		},
+		{
+			name: "hyphenated composer with hyphenated work (Saint-Saëns)",
+			args: []string{"Saint-Saëns", "Carnival of the Animals"},
+			want: `artist:(Saint AND Saëns) AND work:(Carnival AND of AND the AND Animals)`,
+		},
+		{
+			name: "miscellaneous Lucene specials are all neutralised",
+			args: []string{"Mozart", `Mass +in C: K.427 / "Great"`},
+			want: `artist:Mozart AND work:(Mass AND in AND C AND K.427 AND Great)`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
