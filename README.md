@@ -37,17 +37,18 @@ cp .env.example .env
 
 Edit `.env` and replace the placeholder values:
 
-```dotenv
-SPOTIFY_CLIENT_ID=your_actual_client_id
-SPOTIFY_CLIENT_SECRET=your_actual_client_secret
+```bash
+export SPOTIFY_CLIENT_ID=your_actual_client_id
+export SPOTIFY_CLIENT_SECRET=your_actual_client_secret
 ```
 
-Alternatively, export the variables directly in your shell:
+Then load them into your shell before running the binary:
 
 ```bash
-export SPOTIFY_CLIENT_ID="your_actual_client_id"
-export SPOTIFY_CLIENT_SECRET="your_actual_client_secret"
+source .env
 ```
+
+The program reads credentials from the `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` environment variables — sourcing the file is what puts them there. You can also export them directly in your shell instead of using `.env`.
 
 > **Note:** Never commit your `.env` file to version control. It is already listed in `.gitignore`.
 
@@ -126,8 +127,9 @@ Found 15 track(s):
 The application handles common errors gracefully:
 
 - **Missing search query**: Displays usage instructions
-- **Authentication failures**: Reports token retrieval errors
-- **Search failures**: Shows API errors
+- **Missing credentials**: Reports if `SPOTIFY_CLIENT_ID` or `SPOTIFY_CLIENT_SECRET` is unset
+- **Authentication failures**: Surfaces the HTTP status and Spotify error body (e.g. `invalid_client`) instead of failing silently
+- **Search failures**: Surfaces the HTTP status and Spotify error body
 - **No results**: Notifies you if no tracks match your query
 
 Example:
@@ -145,9 +147,11 @@ Example: classical "Mozart Symphony No. 40"
 ## Troubleshooting
 
 ### "Error getting Spotify token"
-- Verify your Client ID and Client Secret are correct
-- Check that your Spotify app is active and not revoked
-- Ensure you have an internet connection
+The error message includes the HTTP status and the response body from Spotify, so the cause is usually visible in the output:
+
+- `SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET must be set` — the env vars aren't loaded. Run `source .env` (or export them) and try again.
+- `HTTP 400: invalid_client` — the Client ID/Secret are wrong, the app was deleted, or the credentials were revoked. Generate fresh credentials from the Spotify Developer Dashboard.
+- Network error — check your internet connection.
 
 ### "Error searching Spotify"
 - Check your internet connection
