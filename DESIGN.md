@@ -196,12 +196,18 @@ explicitly.
   collapse into a single `(no conductor credited) / ????` Performance
   bucket, which can mask distinct performances when MB is unevenly
   populated.
-- **Choir vs. soloist conflation.** MB uses one relation type (`vocal`)
-  for both choirs and individual vocal soloists, with no further
-  distinguishing field on the relation itself. Both appear together
-  under a shared `Vocal:` line in the output. Distinguishing them would
-  require a follow-up lookup on each artist's MB entity type
-  (Choir vs Person).
+- **Choir vs. soloist heuristic.** Increment 5 split MB's `vocal`
+  credits into separate `Choir:` and `Soloists:` lines via a
+  name-pattern heuristic (`isChoir` in `performance.go`): names
+  containing keywords like Choir / Chor / Kantorei / Singverein /
+  Kammerchor / Coro / Cappella / Ensemble / Cathedral are classified
+  as choirs; everything else is a soloist. The MB-correct alternative
+  — fetching each artist's entity to read its `type` field
+  (Choir vs Person) — would mean one extra API call per vocal credit
+  per recording, which is too expensive for the value. The heuristic
+  will mis-classify edge cases (e.g. a vocal Ensemble that's actually
+  a chamber group, or a choir whose name contains none of the
+  keywords).
 - **No Spotify URL for sparsely-credited performances.** The Spotify
   match-verification step (decision 6) requires the performance's
   conductor or orchestra to appear in the candidate album's artist

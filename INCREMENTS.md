@@ -70,6 +70,38 @@ version' relations.)") makes the expansion transparent.
 
 Commit: `afe36a8`.
 
+### 5. Display polish: choir/soloist split and record label
+
+#### 5a — Choir / soloist split
+
+MusicBrainz tags both choirs and individual vocal soloists with the
+same `vocal` relation type. They used to share a single `Vocal:`
+output line which the user had to mentally untangle. Increment 5a
+introduces an `isChoir(name)` heuristic — a regex over multilingual
+choir-naming keywords (Choir / Chor / Kantorei / Singverein /
+Kammerchor / Coro / Cappella / Cathedral / Ensemble / Singers /
+Voices) — and splits the credits into separate `Choir:` and
+`Soloists:` output lines.
+
+`Performance.Vocals` was replaced by `Performance.Choirs` and
+`Performance.Soloists`; `groupRecordings` classifies each `vocal`
+relation at extraction time and merges via a new `mergeUnique`
+helper.
+
+Commit: `d508e81`.
+
+#### 5b — Record label
+
+Spotify's simplified album object (returned by `/v1/search`) doesn't
+include the `label` field. Increment 5b adds a follow-up batch lookup
+against `/v1/albums?ids=…` after the per-performance search
+completes; one HTTP call covers up to 20 albums. The retrieved label
+is stored on `Performance.Label` and displayed on a new `Label:`
+output line. `SpotifyAlbum` gained an `ID` field so we can capture
+the album ID at search time and feed it into the lookup.
+
+Commit: `fec345c`.
+
 ## Cross-cutting
 
 Alongside the numbered increments:
@@ -90,16 +122,19 @@ Alongside the numbered increments:
 
 Reasonable next directions:
 
-1. **Display / UX polish.** Truncate long vocal lists; add a flag for
-   verbose vs compact output; colorise headings; group the displayed
-   Works section into "matched" vs "reached via expansion" sub-sections.
-   Small and contained.
-2. **Address another known limitation from `DESIGN.md`.** Most
-   impactful candidate now that cross-edition aggregation is done:
-   *LLM query normalization* (deferred per decision 3) — would fix
-   `Bach Mass in B minor` returning nothing because MusicBrainz's
-   canonical title is `h-Moll-Messe`.
-3. **Cross into "Out of scope."** Playback (Spotify Player API + user
+1. **LLM query normalization** (deferred per decision 3 in `DESIGN.md`).
+   Most-impactful remaining limitation: would fix `Bach Mass in B minor`
+   returning nothing because MusicBrainz's canonical title is
+   `h-Moll-Messe`. Adds a third optional credential
+   (`ANTHROPIC_API_KEY`) and one external network call per query.
+2. **More display polish.** Truncate long soloist lists; add a `-v`
+   flag for verbose vs compact output; colorise headings; visually
+   group the Works section into "matched" vs "reached via expansion".
+3. **Recover URLs for sparsely-credited performances.** Extend
+   `albumMatchScore` to also match against soloist names (or use
+   Spotify's stricter DSL with retries), so recordings credited only
+   to soloists can still get a verified Spotify URL.
+4. **Cross into "Out of scope."** Playback (Spotify Player API + user
    OAuth, authorization-code flow rather than client-credentials) or
    playlist creation. Bigger lift, different auth shape.
 

@@ -76,23 +76,26 @@ Recordings (4):
 
 1. 2007  René Jacobs
    Orchestra: Akademie für Alte Musik Berlin
-   Vocal:     RIAS Kammerchor
+   Choir:     RIAS Kammerchor
+   Label:     Berlin Classics
    Spotify:   https://open.spotify.com/album/4GTwxM7IjQI147iGH20Omf
 
 2. 2002  Christian Brembeck
    Orchestra: Capella Istropolitana
 
 3. 1996  (no conductor credited)
-   Vocal:     Markus Brutscher, Johanna Koslowsky, …
+   Soloists:  Markus Brutscher, Johanna Koslowsky, …
 
 4. ????  (no conductor credited)
-   Vocal:     Hana Blažíková, David Erler, Peter Harvey, …
+   Soloists:  Hana Blažíková, David Erler, Peter Harvey, …
 ```
 
-`Spotify:` is only shown for performances where the search-result
-album could be verified by conductor or orchestra match — sparsely
-credited recordings (no conductor and no orchestra) won't get a URL.
-Without Spotify credentials the `Spotify:` line is absent for all.
+`Choir:` and `Soloists:` are split via a name-pattern heuristic on the
+MusicBrainz `vocal` credits (which conflate both). `Label:` and
+`Spotify:` are only shown when (a) Spotify credentials are present and
+(b) the search-result album passes verification by conductor or
+orchestra match — sparsely credited recordings (no conductor and no
+orchestra) won't get either.
 
 ## How it works
 
@@ -118,20 +121,27 @@ Without Spotify credentials the `Spotify:` line is absent for all.
    to get the recordings, with one second between calls to respect
    MusicBrainz's public rate limit.
 5. **Group.** Recordings are deduplicated into Performances by
-   `(conductor, orchestra, year)`. Vocal credits (choirs and soloists,
-   both tagged `vocal` by MusicBrainz) are merged across movements of
-   the same performance, then printed sorted year-descending.
-6. **Spotify URLs (optional).** For each Performance we either reuse a
-   Spotify URL the recording already had via MusicBrainz `url-rels`,
-   or, if absent, fall back to a Spotify album search (composer + work
-   + conductor + orchestra). Search results are then *verified*: a
-   candidate album is only attached if the performance's conductor or
-   orchestra appears in the album's artist credits or name. If nothing
-   passes verification the URL is left empty — better no URL than the
-   wrong one, since Spotify's ranking happily returns unrelated albums
-   when no real match exists. MB's `url-rels` coverage is essentially
-   zero in practice, so the verified fallback does almost all the
-   work. Without credentials the whole step is skipped.
+   `(conductor, orchestra, year)`. The `vocal` credits MusicBrainz
+   reports are split via a name-pattern heuristic (`isChoir`) into
+   choirs (named after Choir / Chor / Kantorei / Singverein /
+   Kammerchor / Coro / Cappella / etc.) and individual soloists, then
+   merged across movements of the same performance. Sorted
+   year-descending.
+6. **Spotify URLs and labels (optional).** For each Performance we
+   either reuse a Spotify URL the recording already had via
+   MusicBrainz `url-rels`, or, if absent, fall back to a Spotify album
+   search (composer + work + conductor + orchestra). Search results
+   are then *verified*: a candidate album is only attached if the
+   performance's conductor or orchestra appears in the album's artist
+   credits or name. If nothing passes verification the URL is left
+   empty — better no URL than the wrong one, since Spotify's ranking
+   happily returns unrelated albums when no real match exists. After
+   the per-performance search, a single batch lookup against
+   `/v1/albums?ids=…` fetches the record `Label` for every attached
+   album (the simplified search-result album doesn't include it).
+   MB's `url-rels` coverage is essentially zero in practice, so the
+   verified fallback does almost all the work. Without credentials
+   the whole step is skipped.
 
 A descriptive `User-Agent` is sent on every MusicBrainz request, as the
 public API requires.
