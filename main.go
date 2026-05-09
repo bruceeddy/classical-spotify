@@ -67,14 +67,17 @@ func getSpotifyToken() (string, error) {
 	}
 	defer resp.Body.Close()
 
-	var tokenResp TokenResponse
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	err = json.Unmarshal(body, &tokenResp)
-	if err != nil {
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("spotify auth failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var tokenResp TokenResponse
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return "", err
 	}
 
@@ -109,9 +112,12 @@ func searchTracks(query string, accessToken string) ([]Track, error) {
 		return nil, err
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("spotify search failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
 	var searchResp SearchResponse
-	err = json.Unmarshal(body, &searchResp)
-	if err != nil {
+	if err := json.Unmarshal(body, &searchResp); err != nil {
 		return nil, err
 	}
 
