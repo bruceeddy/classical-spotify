@@ -5,11 +5,31 @@ import (
 	"strings"
 )
 
+// parseQueryArgs splits the user's shell args into a (composer, work)
+// pair. Multiple args: the first is the composer, the rest joined is
+// the work. Single arg: split on whitespace and apply the same rule;
+// if the result is one token, only composer is set and work is empty.
+func parseQueryArgs(args []string) (composer, work string) {
+	if len(args) == 0 {
+		return
+	}
+	if len(args) >= 2 {
+		composer = args[0]
+		work = strings.Join(args[1:], " ")
+		return
+	}
+	parts := strings.Fields(args[0])
+	if len(parts) < 2 {
+		composer = args[0]
+		return
+	}
+	composer = parts[0]
+	work = strings.Join(parts[1:], " ")
+	return
+}
+
 // buildQuery turns the user's args into a structured MusicBrainz Lucene
-// query. If the user supplies multiple shell args, the first is the
-// composer and the rest is the work name. If a single arg is supplied,
-// it's split on whitespace under the same convention. A single word is
-// passed through unstructured.
+// query. A single-token query is passed through unstructured.
 //
 // Multi-word fields are joined with AND inside parens rather than wrapped
 // as a quoted phrase: a quoted phrase requires the words consecutively in
@@ -17,17 +37,9 @@ import (
 // language differs (e.g. "h-Moll-Messe" for Bach's Mass in B minor),
 // while AND requires every word but tolerates surrounding tokens.
 func buildQuery(args []string) string {
-	var composer, work string
-	if len(args) >= 2 {
-		composer = args[0]
-		work = strings.Join(args[1:], " ")
-	} else {
-		parts := strings.Fields(args[0])
-		if len(parts) < 2 {
-			return args[0]
-		}
-		composer = parts[0]
-		work = strings.Join(parts[1:], " ")
+	composer, work := parseQueryArgs(args)
+	if work == "" {
+		return composer
 	}
 	return fmt.Sprintf(`artist:%s AND work:%s`,
 		luceneAndGroup(sanitizeLucene(composer)),

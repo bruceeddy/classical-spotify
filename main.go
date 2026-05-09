@@ -25,6 +25,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	composer, work := parseQueryArgs(args)
 	query := buildQuery(args)
 	fmt.Printf("Searching MusicBrainz: %s\n\n", query)
 
@@ -51,6 +52,11 @@ func main() {
 		fmt.Println("No recordings linked in MusicBrainz for the matched work(s).")
 		return
 	}
+
+	if err := fillSpotifyURLs(performances, composer, work); err != nil {
+		fmt.Fprintf(os.Stderr, "Note: Spotify URL search skipped — %v\n", err)
+	}
+
 	displayPerformances(performances)
 }
 
