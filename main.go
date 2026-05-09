@@ -15,8 +15,6 @@ import (
 const (
 	spotifyAuthURL   = "https://accounts.spotify.com/api/token"
 	spotifySearchURL = "https://api.spotify.com/v1/search"
-	clientID         = ""
-	clientSecret     = ""
 )
 
 type Track struct {
@@ -46,6 +44,12 @@ type TokenResponse struct {
 
 // getSpotifyToken retrieves an access token from the Spotify API
 func getSpotifyToken() (string, error) {
+	clientID := os.Getenv("SPOTIFY_CLIENT_ID")
+	clientSecret := os.Getenv("SPOTIFY_CLIENT_SECRET")
+	if clientID == "" || clientSecret == "" {
+		return "", fmt.Errorf("SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET must be set")
+	}
+
 	auth := base64.StdEncoding.EncodeToString([]byte(clientID + ":" + clientSecret))
 
 	req, err := http.NewRequest("POST", spotifyAuthURL, strings.NewReader("grant_type=client_credentials"))
