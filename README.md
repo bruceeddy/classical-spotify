@@ -10,10 +10,10 @@ This tool resolves a free-text query to a canonical Work entity in
 MusicBrainz, then lists the recordings linked to that Work, grouped by
 performance fingerprint `(conductor, orchestra, year)`.
 
-> **Status.** Early. The MusicBrainz-backed search and grouping work
-> end-to-end. Linking each recording to its Spotify URL is planned
-> (Increment 3); playback / playlist creation is deferred. See
-> [`DESIGN.md`](DESIGN.md) for the full design and known limitations.
+> **Status.** Early but functional. Search, recording lookup, and
+> Spotify URL resolution work end-to-end. Playback / playlist creation
+> is deferred. See [`DESIGN.md`](DESIGN.md) for the full design and
+> known limitations.
 
 ## Build
 
@@ -21,8 +21,21 @@ performance fingerprint `(conductor, orchestra, year)`.
 go build -o classical
 ```
 
-Requires Go 1.21 or later. No API keys are needed at the moment;
-MusicBrainz's public API is open.
+Requires Go 1.21 or later. The MusicBrainz queries run anonymously, so
+the tool works out of the box without credentials.
+
+To also surface Spotify album URLs alongside each recording, register
+a free Spotify app at <https://developer.spotify.com/dashboard> and
+export your credentials before running:
+
+```bash
+export SPOTIFY_CLIENT_ID=your_client_id
+export SPOTIFY_CLIENT_SECRET=your_secret
+```
+
+(or put them in a sourceable `.env` — see [`.env.example`](.env.example)).
+Without these env vars, the tool prints a one-line `Note:` to stderr
+explaining the skip and continues with MusicBrainz-only output.
 
 ## Usage
 
@@ -63,16 +76,22 @@ Recordings (4):
 1. 2007  René Jacobs
    Orchestra: Akademie für Alte Musik Berlin
    Vocal:     RIAS Kammerchor
+   Spotify:   https://open.spotify.com/album/4GTwxM7IjQI147iGH20Omf
 
 2. 2002  Christian Brembeck
    Orchestra: Capella Istropolitana
+   Spotify:   https://open.spotify.com/album/1MqMfzyUUDKb1hkT8q3AtI
 
 3. 1996  (no conductor credited)
    Vocal:     Markus Brutscher, Johanna Koslowsky, …
+   Spotify:   https://open.spotify.com/album/3ELfX4GIPcYOTJBl8PdoKi
 
 4. ????  (no conductor credited)
    Vocal:     Hana Blažíková, David Erler, Peter Harvey, …
+   Spotify:   https://open.spotify.com/album/3ELfX4GIPcYOTJBl8PdoKi
 ```
+
+(Without Spotify credentials the `Spotify:` lines are absent.)
 
 ## How it works
 
@@ -94,6 +113,13 @@ Recordings (4):
    `(conductor, orchestra, year)`. Vocal credits (choirs and soloists,
    both tagged `vocal` by MusicBrainz) are merged across movements of
    the same performance, then printed sorted year-descending.
+5. **Spotify URLs (optional).** For each Performance we either reuse a
+   Spotify URL the recording already had via MusicBrainz `url-rels`,
+   or, if absent, fall back to a Spotify album search (composer + work
+   + conductor + orchestra) and attach the first matching album's URL.
+   MB's `url-rels` coverage for Spotify is essentially zero in practice
+   for classical recordings, so the fallback does almost all the
+   work. Without credentials the step is skipped.
 
 A descriptive `User-Agent` is sent on every MusicBrainz request, as the
 public API requires.
@@ -121,13 +147,28 @@ public API requires.
 For the full design rationale and the complete list of known
 limitations, see [`DESIGN.md`](DESIGN.md).
 
+## Running the tests
+
+```bash
+go test ./...
+```
+
+Tests are hermetic — no live calls to MusicBrainz or Spotify. The HTTP
+paths use Go's `net/http/httptest` with canned responses captured from
+the live APIs. For the per-test breakdown:
+
+```bash
+go test -v ./...
+```
+
 ## Project layout
 
 ```
-main.go            main(), orchestration, display
+main.go            main(), orchestration, display helpers
 musicbrainz.go     MB types and HTTP client (mbGet, searchWorks, browseRecordingsByWork)
-query.go           buildQuery and Lucene helpers
+query.go           parseQueryArgs, buildQuery, Lucene helpers
 performance.go     Performance type, groupRecordings
-*_test.go          tests, mirroring each file
+spotify.go         Spotify auth, album search, fillSpotifyURLs
+*_test.go          tests, one file per source file
 DESIGN.md          design decisions and known limitations
 ```

@@ -95,21 +95,36 @@ existing track-search code is removed.
 Dual modes would complicate the CLI without serving a real need. Easy to add
 back later behind a flag if wanted.
 
-### 5. Print-and-exit on ambiguous queries
+### 5. Show all matched Works and aggregate their recordings
 
-**Decision.** When a query resolves to multiple plausible Works, print all of
-them (with composer + catalog number) and exit. The user re-queries with more
-specificity (e.g. `"Mozart Mass in C K.427"`).
+**Decision.** When a query resolves to N Works, display all of them (with
+composer + catalog number) and then browse recordings for the top
+`maxWorksToBrowse`, aggregating the results into a single Performance
+list. The user sees both the breadth of MB matches and the actual
+playable recordings in one response.
 
 **Alternatives considered.**
-- *Interactive disambiguation prompt.* Cleaner UX but breaks scripting and
-  adds a TTY dependency.
-- *Pick the top match silently.* Risk of acting on the wrong work — frustrating
-  when wrong, opaque when right.
+- *Print Works and exit on ambiguity.* The original draft of this
+  decision. Rejected during increment 2: classical works in MB are
+  typically split across several "edition" entities (Maunder / Levin /
+  fragment for K.427), and forcing the user to re-query for each
+  edition fragments the result for what is effectively one piece.
+- *Auto-pick the top-scoring Work.* Risk of showing only the top
+  edition's recordings — which can be empty (Maunder's K.427 has zero
+  recordings linked in MB) — while the productive editions are
+  silently hidden. Aggregating across matches sidesteps the ranking
+  question.
+- *Interactive disambiguation prompt.* Cleaner UX for genuinely
+  ambiguous cases but breaks scripting and adds a TTY dependency.
 
 **Trade-offs.**
+- (+) Useful output even for ambiguous queries; the displayed Works
+  section is the disambiguation signal if the user needs it.
 - (+) Predictable, scriptable, no hidden state.
-- (−) Two-step interaction for ambiguous queries.
+- (−) Genuinely distinct works that match the same query (e.g. K.317
+  *and* K.427 both match `Mozart Mass in C`) merge into one recording
+  list; the user has to read titles in the Works section to tell
+  which Performance belongs to which Work.
 
 ### 6. Spotify mapping: prefer MB URL relationships, fall back to search
 
