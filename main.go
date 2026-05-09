@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -13,95 +12,44 @@ import (
 )
 
 const (
-	spotifyAuthURL   = "https://accounts.spotify.com/api/token"
-	spotifySearchURL = "https://api.spotify.com/v1/search"
+	musicBrainzWorkURL = "https://musicbrainz.org/ws/2/work/"
+	userAgent          = "classical/0.1 ( eddy.bruce@gmail.com )"
 )
 
-type Track struct {
-	Name    string `json:"name"`
-	Artists []struct {
+type Work struct {
+	ID             string         `json:"id"`
+	Title          string         `json:"title"`
+	Type           string         `json:"type"`
+	Score          int            `json:"score"`
+	Disambiguation string         `json:"disambiguation"`
+	Relations      []WorkRelation `json:"relations"`
+}
+
+type WorkRelation struct {
+	Type   string `json:"type"`
+	Artist *struct {
 		Name string `json:"name"`
-	} `json:"artists"`
-	Album struct {
-		Name string `json:"name"`
-	} `json:"album"`
-	ExternalURLs struct {
-		Spotify string `json:"spotify"`
-	} `json:"external_urls"`
+	} `json:"artist,omitempty"`
 }
 
-type SearchResponse struct {
-	Tracks struct {
-		Items []Track `json:"items"`
-	} `json:"tracks"`
+type WorkSearchResponse struct {
+	Works []Work `json:"works"`
+	Count int    `json:"count"`
 }
 
-type TokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
-	ExpiresIn   int    `json:"expires_in"`
-}
-
-// getSpotifyToken retrieves an access token from the Spotify API
-func getSpotifyToken() (string, error) {
-	clientID := os.Getenv("SPOTIFY_CLIENT_ID")
-	clientSecret := os.Getenv("SPOTIFY_CLIENT_SECRET")
-	if clientID == "" || clientSecret == "" {
-		return "", fmt.Errorf("SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET must be set")
-	}
-
-	auth := base64.StdEncoding.EncodeToString([]byte(clientID + ":" + clientSecret))
-
-	req, err := http.NewRequest("POST", spotifyAuthURL, strings.NewReader("grant_type=client_credentials"))
-	if err != nil {
-		return "", err
-	}
-
-	req.Header.Add("Authorization", "Basic "+auth)
-	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("spotify auth failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var tokenResp TokenResponse
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return "", err
-	}
-
-	return tokenResp.AccessToken, nil
-}
-
-// searchTracks searches Spotify for tracks matching the query
-func searchTracks(query string, accessToken string) ([]Track, error) {
+func searchWorks(query string) ([]Work, error) {
 	params := url.Values{}
-	params.Add("q", query)
-	params.Add("type", "track")
-	params.Add("limit", "20")
+	params.Add("query", query)
+	params.Add("fmt", "json")
+	params.Add("limit", "10")
 
-	fullURL := spotifySearchURL + "?" + params.Encode()
-
-	req, err := http.NewRequest("GET", fullURL, nil)
+	req, err := http.NewRequest("GET", musicBrainzWorkURL+"?"+params.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", userAgent)
 
-	req.Header.Add("Authorization", "Bearer "+accessToken)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -113,15 +61,24 @@ func searchTracks(query string, accessToken string) ([]Track, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("spotify search failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("musicbrainz work search failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	var searchResp SearchResponse
+	var searchResp WorkSearchResponse
 	if err := json.Unmarshal(body, &searchResp); err != nil {
 		return nil, err
 	}
 
-	return searchResp.Tracks.Items, nil
+	return searchResp.Works, nil
+}
+
+func composer(w Work) string {
+	for _, r := range w.Relations {
+		if r.Type == "composer" && r.Artist != nil {
+			return r.Artist.Name
+		}
+	}
+	return ""
 }
 
 func main() {
@@ -130,43 +87,38 @@ func main() {
 
 	if len(args) == 0 {
 		fmt.Println("Usage: classical <search query>")
-		fmt.Println("Example: classical \"Mozart Symphony No. 40\"")
+		fmt.Println("Example: classical Mozart Great Mass in C")
 		os.Exit(1)
 	}
 
 	query := strings.Join(args, " ")
 
-	fmt.Printf("Searching Spotify for: \"%s\"\n\n", query)
+	fmt.Printf("Searching MusicBrainz for works matching: %q\n\n", query)
 
-	// Get access token
-	token, err := getSpotifyToken()
+	works, err := searchWorks(query)
 	if err != nil {
-		fmt.Printf("Error getting Spotify token: %v\n", err)
+		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Search for tracks
-	tracks, err := searchTracks(query, token)
-	if err != nil {
-		fmt.Printf("Error searching Spotify: %v\n", err)
-		os.Exit(1)
-	}
-
-	if len(tracks) == 0 {
-		fmt.Println("No tracks found.")
+	if len(works) == 0 {
+		fmt.Println("No works found.")
 		return
 	}
 
-	fmt.Printf("Found %d track(s):\n\n", len(tracks))
-	for i, track := range tracks {
-		artists := make([]string, len(track.Artists))
-		for j, artist := range track.Artists {
-			artists[j] = artist.Name
+	fmt.Printf("Found %d work(s):\n\n", len(works))
+	for i, w := range works {
+		fmt.Printf("%d. %s\n", i+1, w.Title)
+		if c := composer(w); c != "" {
+			fmt.Printf("   Composer: %s\n", c)
 		}
-
-		fmt.Printf("%d. %s\n", i+1, track.Name)
-		fmt.Printf("   Artists: %s\n", strings.Join(artists, ", "))
-		fmt.Printf("   Album: %s\n", track.Album.Name)
-		fmt.Printf("   URL: %s\n\n", track.ExternalURLs.Spotify)
+		if w.Type != "" {
+			fmt.Printf("   Type:     %s\n", w.Type)
+		}
+		if w.Disambiguation != "" {
+			fmt.Printf("   Note:     %s\n", w.Disambiguation)
+		}
+		fmt.Printf("   Score:    %d\n", w.Score)
+		fmt.Printf("   MBID:     %s\n\n", w.ID)
 	}
 }
