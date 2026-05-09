@@ -128,6 +128,56 @@ orchestra and pick the best string-similarity match against the album title.
 **Decision.** Dedupe Recordings by `(conductor, ensemble, year)` and sort by
 year descending. Catalog number remains the join key through the pipeline.
 
+## Known limitations
+
+Things we've observed or accepted as trade-offs in the current
+implementation. Listed centrally so future work can pick them up
+explicitly.
+
+- **Multilingual / colloquial work titles.** A query like `Bach Mass in B
+  minor` returns no results because MB's canonical title for that work is
+  `h-Moll-Messe, BWV 232` and none of the English words appear in it.
+  Workarounds: use the catalog number (`Bach BWV 232`) or the canonical
+  title (`Bach h-Moll-Messe`). The long-term fix is the deferred LLM
+  normalization layer (decision 3).
+- **Cross-edition aggregation.** MB models a single classical work as
+  several sibling "edition" Works (e.g. K.427 has Maunder, Levin, and the
+  original-fragment "Große Messe" as separate MBIDs) linked by
+  `other version` relations. Recordings link to whichever edition their
+  album metadata cites. We don't follow those relations. Concrete
+  consequence: `Mozart Great Mass in C` finds the Rilling / Levin
+  recording but misses Karajan and Gardiner, whose recordings are linked
+  to a different edition Work that doesn't surface in our top matches.
+- **Composer-as-first-token heuristic.** `buildQuery` treats the first
+  shell arg (or, with a single arg, the first whitespace-separated token)
+  as the composer surname. Multi-word composers must be shell-quoted as
+  one arg, e.g. `./classical "Wolfgang Amadeus Mozart" "Great Mass in C"`.
+- **Top-5 cap on Works to browse.** The recording-browse phase visits at
+  most the top 5 matched Works, both to bound latency and to stay inside
+  MB's 1 req/sec public rate limit. Recordings linked to a 6th+ matched
+  edition are not surfaced.
+- **Movement filter is heuristic.** We drop Work entries whose title
+  contains `": "` or `" from "`, on the assumption that those are
+  movement-style sub-works. The risk is a false positive on a parent
+  work whose canonical title genuinely contains either substring (none
+  observed yet).
+- **MB recording sparsity.** Some MB recordings have no `conductor`, no
+  `performing orchestra`, or no `first-release-date`. Such recordings
+  collapse into a single `(no conductor credited) / ????` Performance
+  bucket, which can mask distinct performances when MB is unevenly
+  populated.
+- **Choir vs. soloist conflation.** MB uses one relation type (`vocal`)
+  for both choirs and individual vocal soloists, with no further
+  distinguishing field on the relation itself. Both appear together
+  under a shared `Vocal:` line in the output. Distinguishing them would
+  require a follow-up lookup on each artist's MB entity type
+  (Choir vs Person).
+- **Lucene escaping is partial.** `buildQuery` strips `"`, `(`, and `)`
+  from user input so they can't break our `field:(...)` wrapping. Other
+  Lucene-special characters (`+ - && || ! { } [ ] ^ ~ * ? : \ /`) pass
+  through unsanitised. Unlikely to bite for classical-music names but
+  worth knowing if a query suddenly errors.
+
 ## Out of scope (for now)
 
 - **Playback** (queueing tracks in Spotify). Requires user OAuth
