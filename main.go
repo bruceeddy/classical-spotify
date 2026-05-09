@@ -8,11 +8,22 @@ import (
 	"time"
 )
 
-// maxWorksToBrowse caps how many of the matched Works we fetch
-// recordings for, to keep us inside MusicBrainz's 1 req/sec budget
-// even when the search returns many edition-variants of the same
-// piece.
-const maxWorksToBrowse = 5
+const (
+	// maxInitialMatches caps how many of the search-result Works
+	// feed into edition expansion. Kept low so the expansion has
+	// headroom to add siblings before hitting maxWorksToBrowse.
+	maxInitialMatches = 5
+
+	// maxEditionHops bounds the depth of the cross-edition BFS over
+	// MB "other version" relations. 2 is enough to walk a leaf
+	// edition → canonical parent → all sibling editions.
+	maxEditionHops = 2
+
+	// maxWorksToBrowse caps the total Work count after edition
+	// expansion, both for display and for recording browse, to keep
+	// us inside MusicBrainz's 1 req/sec budget.
+	maxWorksToBrowse = 10
+)
 
 func main() {
 	flag.Parse()
@@ -40,11 +51,18 @@ func main() {
 		fmt.Println("No works found.")
 		return
 	}
-	if len(works) > 10 {
-		works = works[:10]
+	if len(works) > maxInitialMatches {
+		works = works[:maxInitialMatches]
 	}
 
+	matchedCount := len(works)
+	works = expandEditions(musicBrainzWorkURL, works, maxEditionHops, maxWorksToBrowse, time.Second)
+	works = filterMovements(works)
+
 	displayWorks(works)
+	if added := len(works) - matchedCount; added > 0 {
+		fmt.Printf("(%d additional Work(s) reached via MusicBrainz \"other version\" relations.)\n\n", added)
+	}
 
 	recs := gatherRecordings(works)
 	performances := groupRecordings(recs)

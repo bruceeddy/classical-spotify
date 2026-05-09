@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -25,8 +27,13 @@ type Work struct {
 }
 
 type WorkRelation struct {
-	Type   string      `json:"type"`
-	Artist *WorkArtist `json:"artist,omitempty"`
+	Type      string      `json:"type"`
+	Direction string      `json:"direction,omitempty"`
+	Artist    *WorkArtist `json:"artist,omitempty"`
+	// Work is populated for work-to-work relations (e.g. "other version",
+	// "parts"). The embedded Work is a stub: id, title, type — no nested
+	// relations.
+	Work *Work `json:"work,omitempty"`
 }
 
 type WorkArtist struct {
@@ -112,6 +119,83 @@ func browseRecordingsByWork(baseURL, workID string) ([]Recording, error) {
 		return nil, err
 	}
 	return resp.Recordings, nil
+}
+
+// lookupWorkOtherVersions fetches a single Work with `inc=work-rels` and
+// returns the Works it points at via "other version" relations. The
+// returned Work entries are stubs (id / title / type only) — enough to
+// drive a follow-up recording-browse but not full Work entities.
+func lookupWorkOtherVersions(baseURL, workID string) ([]Work, error) {
+	params := url.Values{}
+	params.Add("fmt", "json")
+	params.Add("inc", "work-rels")
+
+	var w Work
+	if err := mbGet(baseURL+workID+"?"+params.Encode(), &w); err != nil {
+		return nil, err
+	}
+	var siblings []Work
+	for _, rel := range w.Relations {
+		if rel.Type == "other version" && rel.Work != nil {
+			siblings = append(siblings, *rel.Work)
+		}
+	}
+	return siblings, nil
+}
+
+// expandEditions performs a breadth-first walk over the "other version"
+// relation graph starting from `initial`, returning the deduplicated
+// union (originals + reachable siblings) capped at maxExpanded. Hops
+// beyond maxHops are not walked. sleepBetween is the per-call delay
+// inserted between MusicBrainz lookups; tests can pass 0.
+//
+// MusicBrainz models classical works as multiple sibling "edition"
+// Work entities (Maunder, Levin, Bärenreiter, ...) with `other version`
+// relations between them, and recordings link to whichever edition
+// their album metadata cites. Walking these edges materially improves
+// recording coverage for queries that hit a leaf edition.
+func expandEditions(baseURL string, initial []Work, maxHops, maxExpanded int, sleepBetween time.Duration) []Work {
+	seen := make(map[string]bool, len(initial))
+	expanded := make([]Work, 0, len(initial))
+	for _, w := range initial {
+		if !seen[w.ID] {
+			seen[w.ID] = true
+			expanded = append(expanded, w)
+		}
+	}
+
+	frontier := append([]Work(nil), expanded...)
+	calls := 0
+	for hop := 0; hop < maxHops && len(frontier) > 0 && len(expanded) < maxExpanded; hop++ {
+		var next []Work
+		for _, w := range frontier {
+			if len(expanded) >= maxExpanded {
+				break
+			}
+			if calls > 0 && sleepBetween > 0 {
+				time.Sleep(sleepBetween)
+			}
+			calls++
+			siblings, err := lookupWorkOtherVersions(baseURL, w.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error looking up other-versions for %s: %v\n", w.ID, err)
+				continue
+			}
+			for _, s := range siblings {
+				if seen[s.ID] {
+					continue
+				}
+				seen[s.ID] = true
+				expanded = append(expanded, s)
+				next = append(next, s)
+				if len(expanded) >= maxExpanded {
+					break
+				}
+			}
+		}
+		frontier = next
+	}
+	return expanded
 }
 
 // filterMovements drops Work entities that are individual movements of a

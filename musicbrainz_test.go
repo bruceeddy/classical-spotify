@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -255,6 +256,147 @@ func TestBrowseRecordingsByWork_ParsesAndSendsParams(t *testing.T) {
 	}
 	if len(recs[0].Relations) != 3 {
 		t.Errorf("recs[0] has %d relations, want 3", len(recs[0].Relations))
+	}
+}
+
+func TestLookupWorkOtherVersions_ParsesAndFilters(t *testing.T) {
+	// Mixed relations: composer, parts, performance, and two "other
+	// version" links. Only the other-version targets should come back.
+	const canned = `{
+  "id": "fc221f1e-a2ad-4591-96a5-704c1539fbe3",
+  "title": "Great Mass in C minor, K. 427",
+  "type": "Mass",
+  "relations": [
+    {"type": "composer", "direction": "backward", "artist": {"name": "Mozart"}},
+    {"type": "parts", "direction": "forward", "work": {"id": "movement-1", "title": "Kyrie", "type": ""}},
+    {"type": "other version", "direction": "backward",
+     "work": {"id": "712210fe-fragment", "title": "Missa in c-Moll, K. 427/417a", "type": "Mass"}},
+    {"type": "other version", "direction": "forward",
+     "work": {"id": "ee2b44c5-levin", "title": "Mass no. 17 ... Levin", "type": "Mass"}},
+    {"type": "performance", "direction": "backward",
+     "recording": {"id": "rec-x", "title": "Some Kyrie"}}
+  ]
+}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "fc221f1e") {
+			t.Errorf("URL path = %q, expected MBID in path", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("inc"); got != "work-rels" {
+			t.Errorf("inc = %q, want work-rels", got)
+		}
+		if got := r.URL.Query().Get("fmt"); got != "json" {
+			t.Errorf("fmt = %q", got)
+		}
+		w.Write([]byte(canned))
+	}))
+	defer server.Close()
+
+	siblings, err := lookupWorkOtherVersions(server.URL+"/", "fc221f1e-a2ad-4591-96a5-704c1539fbe3")
+	if err != nil {
+		t.Fatalf("lookupWorkOtherVersions: %v", err)
+	}
+	if len(siblings) != 2 {
+		t.Fatalf("got %d siblings, want 2 (other-version only, ignoring composer/parts/performance)", len(siblings))
+	}
+	gotIDs := []string{siblings[0].ID, siblings[1].ID}
+	wantIDs := []string{"712210fe-fragment", "ee2b44c5-levin"}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Errorf("sibling IDs = %v, want %v", gotIDs, wantIDs)
+	}
+	if siblings[0].Title != "Missa in c-Moll, K. 427/417a" {
+		t.Errorf("siblings[0].Title = %q", siblings[0].Title)
+	}
+}
+
+func TestExpandEditions_BFSAndDedup(t *testing.T) {
+	// Topology: A → B; B → C, D, A. A is the seed. Expansion should
+	// reach {A, B, C, D} once and not re-add A on the back-edge.
+	responses := map[string]string{
+		"A": `{"id":"A","title":"A-work","type":"Mass","relations":[
+              {"type":"other version","direction":"forward","work":{"id":"B","title":"B-work","type":"Mass"}}]}`,
+		"B": `{"id":"B","title":"B-work","type":"Mass","relations":[
+              {"type":"other version","direction":"backward","work":{"id":"A","title":"A-work","type":"Mass"}},
+              {"type":"other version","direction":"forward","work":{"id":"C","title":"C-work","type":"Mass"}},
+              {"type":"other version","direction":"forward","work":{"id":"D","title":"D-work","type":"Mass"}}]}`,
+		"C": `{"id":"C","title":"C-work","type":"Mass","relations":[]}`,
+		"D": `{"id":"D","title":"D-work","type":"Mass","relations":[]}`,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/")
+		body, ok := responses[id]
+		if !ok {
+			t.Errorf("unexpected lookup for %q", id)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	got := expandEditions(server.URL+"/", []Work{{ID: "A"}}, 3, 10, 0)
+	gotIDs := make([]string, len(got))
+	for i, w := range got {
+		gotIDs[i] = w.ID
+	}
+	wantIDs := []string{"A", "B", "C", "D"}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Errorf("expanded IDs = %v, want %v (BFS order, no re-addition of seed)", gotIDs, wantIDs)
+	}
+}
+
+func TestExpandEditions_RespectsMaxExpandedCap(t *testing.T) {
+	// A → B → C → D. With maxExpanded=2 the walk should stop after A, B.
+	responses := map[string]string{
+		"A": `{"id":"A","title":"A","type":"Mass","relations":[{"type":"other version","work":{"id":"B","title":"B","type":"Mass"}}]}`,
+		"B": `{"id":"B","title":"B","type":"Mass","relations":[{"type":"other version","work":{"id":"C","title":"C","type":"Mass"}}]}`,
+		"C": `{"id":"C","title":"C","type":"Mass","relations":[{"type":"other version","work":{"id":"D","title":"D","type":"Mass"}}]}`,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/")
+		w.Write([]byte(responses[id]))
+	}))
+	defer server.Close()
+	got := expandEditions(server.URL+"/", []Work{{ID: "A"}}, 5, 2, 0)
+	if len(got) != 2 {
+		t.Fatalf("got %d expanded, want 2 (cap)", len(got))
+	}
+	if got[0].ID != "A" || got[1].ID != "B" {
+		t.Errorf("expanded IDs = [%s, %s], want [A, B]", got[0].ID, got[1].ID)
+	}
+}
+
+func TestExpandEditions_RespectsMaxHops(t *testing.T) {
+	// A → B → C. With maxHops=1 only A's children (B) should be added.
+	responses := map[string]string{
+		"A": `{"id":"A","title":"A","type":"Mass","relations":[{"type":"other version","work":{"id":"B","title":"B","type":"Mass"}}]}`,
+		"B": `{"id":"B","title":"B","type":"Mass","relations":[{"type":"other version","work":{"id":"C","title":"C","type":"Mass"}}]}`,
+		"C": `{"id":"C","title":"C","type":"Mass","relations":[]}`,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/")
+		w.Write([]byte(responses[id]))
+	}))
+	defer server.Close()
+	got := expandEditions(server.URL+"/", []Work{{ID: "A"}}, 1, 10, 0)
+	gotIDs := make([]string, len(got))
+	for i, w := range got {
+		gotIDs[i] = w.ID
+	}
+	wantIDs := []string{"A", "B"}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Errorf("expanded IDs = %v, want %v (hop cap should stop before C)", gotIDs, wantIDs)
+	}
+}
+
+func TestExpandEditions_NoOtherVersions(t *testing.T) {
+	// Single Work with no other-version relations (Bach BWV 232 case).
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"A","title":"A","type":"Mass","relations":[]}`))
+	}))
+	defer server.Close()
+	got := expandEditions(server.URL+"/", []Work{{ID: "A", Title: "Solo"}}, 2, 10, 0)
+	if len(got) != 1 || got[0].ID != "A" {
+		t.Errorf("got %v, want just [A] when there are no other-version edges", got)
 	}
 }
 
