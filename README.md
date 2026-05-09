@@ -13,7 +13,8 @@ performance fingerprint `(conductor, orchestra, year)`.
 > **Status.** Early but functional. Search, recording lookup, and
 > Spotify URL resolution work end-to-end. Playback / playlist creation
 > is deferred. See [`DESIGN.md`](DESIGN.md) for the full design and
-> known limitations.
+> known limitations, or [`INCREMENTS.md`](INCREMENTS.md) for the
+> progress log.
 
 ## Build
 
