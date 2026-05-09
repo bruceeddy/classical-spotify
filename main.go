@@ -8,12 +8,21 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
+	"time"
 )
 
 const (
-	musicBrainzWorkURL = "https://musicbrainz.org/ws/2/work/"
-	userAgent          = "classical/0.1 ( eddy.bruce@gmail.com )"
+	musicBrainzWorkURL      = "https://musicbrainz.org/ws/2/work/"
+	musicBrainzRecordingURL = "https://musicbrainz.org/ws/2/recording"
+	userAgent               = "classical/0.1 ( eddy.bruce@gmail.com )"
+
+	// maxWorksToBrowse caps how many of the matched Works we fetch
+	// recordings for, to keep us inside MusicBrainz's 1 req/sec budget
+	// even when the search returns many edition-variants of the same
+	// piece.
+	maxWorksToBrowse = 5
 )
 
 type Work struct {
@@ -32,6 +41,34 @@ type WorkRelation struct {
 
 type WorkArtist struct {
 	Name string `json:"name"`
+}
+
+type Recording struct {
+	ID               string              `json:"id"`
+	Title            string              `json:"title"`
+	FirstReleaseDate string              `json:"first-release-date"`
+	Relations        []RecordingRelation `json:"relations"`
+}
+
+type RecordingRelation struct {
+	Type   string      `json:"type"`
+	Artist *WorkArtist `json:"artist,omitempty"`
+}
+
+type RecordingBrowseResponse struct {
+	Count      int         `json:"recording-count"`
+	Recordings []Recording `json:"recordings"`
+}
+
+// Performance is one distinct recording of a Work, identified by the
+// (conductor, orchestra, year) fingerprint. Vocals collects every choir
+// or vocal-soloist credit seen across the recordings that share the
+// fingerprint.
+type Performance struct {
+	Conductor string
+	Orchestra string
+	Year      string
+	Vocals    []string
 }
 
 type WorkSearchResponse struct {
@@ -142,6 +179,98 @@ func searchWorks(baseURL, query string) ([]Work, error) {
 	return searchResp.Works, nil
 }
 
+func browseRecordingsByWork(baseURL, workID string) ([]Recording, error) {
+	params := url.Values{}
+	params.Add("work", workID)
+	params.Add("fmt", "json")
+	params.Add("inc", "artist-credits artist-rels")
+	params.Add("limit", "100")
+
+	req, err := http.NewRequest("GET", baseURL+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("musicbrainz recording browse failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var browseResp RecordingBrowseResponse
+	if err := json.Unmarshal(body, &browseResp); err != nil {
+		return nil, err
+	}
+	return browseResp.Recordings, nil
+}
+
+// groupRecordings deduplicates a list of recordings into Performances by
+// (conductor, orchestra, year). Vocal credits seen across grouped
+// recordings are merged so that the choir (and any soloists) appear
+// once per performance. Results are sorted by year descending; missing
+// years sink to the bottom.
+func groupRecordings(recs []Recording) []Performance {
+	type key struct{ conductor, orchestra, year string }
+	byKey := map[key]*Performance{}
+	var order []key
+	for _, r := range recs {
+		var conductor, orchestra string
+		var vocals []string
+		for _, rel := range r.Relations {
+			if rel.Artist == nil {
+				continue
+			}
+			switch rel.Type {
+			case "conductor":
+				conductor = rel.Artist.Name
+			case "performing orchestra":
+				orchestra = rel.Artist.Name
+			case "vocal":
+				vocals = append(vocals, rel.Artist.Name)
+			}
+		}
+		year := ""
+		if len(r.FirstReleaseDate) >= 4 {
+			year = r.FirstReleaseDate[:4]
+		}
+		k := key{conductor, orchestra, year}
+		p, ok := byKey[k]
+		if !ok {
+			byKey[k] = &Performance{conductor, orchestra, year, vocals}
+			order = append(order, k)
+			continue
+		}
+		seen := make(map[string]bool, len(p.Vocals))
+		for _, v := range p.Vocals {
+			seen[v] = true
+		}
+		for _, v := range vocals {
+			if !seen[v] {
+				p.Vocals = append(p.Vocals, v)
+				seen[v] = true
+			}
+		}
+	}
+	out := make([]Performance, len(order))
+	for i, k := range order {
+		out[i] = *byKey[k]
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].Year > out[j].Year
+	})
+	return out
+}
+
 func composer(w Work) string {
 	for _, r := range w.Relations {
 		if r.Type == "composer" && r.Artist != nil {
@@ -195,5 +324,48 @@ func main() {
 		}
 		fmt.Printf("   Score:    %d\n", w.Score)
 		fmt.Printf("   MBID:     %s\n\n", w.ID)
+	}
+
+	toBrowse := works
+	if len(toBrowse) > maxWorksToBrowse {
+		toBrowse = toBrowse[:maxWorksToBrowse]
+	}
+	var recs []Recording
+	for i, w := range toBrowse {
+		if i > 0 {
+			time.Sleep(time.Second)
+		}
+		got, err := browseRecordingsByWork(musicBrainzRecordingURL, w.ID)
+		if err != nil {
+			fmt.Printf("Error browsing recordings for %s: %v\n", w.ID, err)
+			continue
+		}
+		recs = append(recs, got...)
+	}
+
+	performances := groupRecordings(recs)
+	if len(performances) == 0 {
+		fmt.Println("No recordings linked in MusicBrainz for the matched work(s).")
+		return
+	}
+
+	fmt.Printf("Recordings (%d):\n\n", len(performances))
+	for i, p := range performances {
+		year := p.Year
+		if year == "" {
+			year = "????"
+		}
+		conductor := p.Conductor
+		if conductor == "" {
+			conductor = "(no conductor credited)"
+		}
+		fmt.Printf("%d. %s  %s\n", i+1, year, conductor)
+		if p.Orchestra != "" {
+			fmt.Printf("   Orchestra: %s\n", p.Orchestra)
+		}
+		if len(p.Vocals) > 0 {
+			fmt.Printf("   Vocal:     %s\n", strings.Join(p.Vocals, ", "))
+		}
+		fmt.Println()
 	}
 }

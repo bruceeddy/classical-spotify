@@ -215,6 +215,139 @@ func TestSearchWorks_NonOKStatus(t *testing.T) {
 	}
 }
 
+// canned MusicBrainz recording-browse response for a Work, capturing the
+// fields the parser cares about. Two recordings share a (conductor,
+// orchestra, year) fingerprint with different vocal credits per
+// movement (so the merge path is exercised); a third is a different
+// performance; a fourth has no relations and an unknown date.
+const cannedRecordingsResponse = `{
+  "recording-count": 4,
+  "recordings": [
+    {
+      "id": "rec-1",
+      "title": "Mass: I. Kyrie",
+      "first-release-date": "1980-03-01",
+      "relations": [
+        {"type": "conductor", "artist": {"name": "Karajan"}},
+        {"type": "performing orchestra", "artist": {"name": "Berlin Philharmonic"}},
+        {"type": "vocal", "artist": {"name": "Vienna Singverein"}}
+      ]
+    },
+    {
+      "id": "rec-2",
+      "title": "Mass: II. Gloria",
+      "first-release-date": "1980-03-01",
+      "relations": [
+        {"type": "conductor", "artist": {"name": "Karajan"}},
+        {"type": "performing orchestra", "artist": {"name": "Berlin Philharmonic"}},
+        {"type": "vocal", "artist": {"name": "Vienna Singverein"}},
+        {"type": "vocal", "artist": {"name": "Edith Mathis"}}
+      ]
+    },
+    {
+      "id": "rec-3",
+      "title": "Mass: I. Kyrie",
+      "first-release-date": "1985-06-15",
+      "relations": [
+        {"type": "conductor", "artist": {"name": "Gardiner"}},
+        {"type": "performing orchestra", "artist": {"name": "English Baroque Soloists"}},
+        {"type": "vocal", "artist": {"name": "Monteverdi Choir"}}
+      ]
+    },
+    {
+      "id": "rec-4",
+      "title": "Some Excerpt",
+      "first-release-date": "",
+      "relations": []
+    }
+  ]
+}`
+
+func TestBrowseRecordingsByWork_ParsesAndSendsParams(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("User-Agent"); got != userAgent {
+			t.Errorf("User-Agent = %q, want %q", got, userAgent)
+		}
+		q := r.URL.Query()
+		if got := q.Get("work"); got != "ee2b44c5-ba74-4435-ab94-b82c9da84054" {
+			t.Errorf("work param = %q", got)
+		}
+		if got := q.Get("fmt"); got != "json" {
+			t.Errorf("fmt param = %q", got)
+		}
+		if got := q.Get("inc"); got != "artist-credits artist-rels" {
+			t.Errorf("inc param = %q, want space-separated 'artist-credits artist-rels'", got)
+		}
+		w.Write([]byte(cannedRecordingsResponse))
+	}))
+	defer server.Close()
+
+	recs, err := browseRecordingsByWork(server.URL, "ee2b44c5-ba74-4435-ab94-b82c9da84054")
+	if err != nil {
+		t.Fatalf("browseRecordingsByWork: %v", err)
+	}
+	if len(recs) != 4 {
+		t.Fatalf("got %d recordings, want 4", len(recs))
+	}
+	if recs[0].FirstReleaseDate != "1980-03-01" {
+		t.Errorf("recs[0].FirstReleaseDate = %q", recs[0].FirstReleaseDate)
+	}
+	if len(recs[0].Relations) != 3 {
+		t.Errorf("recs[0] has %d relations, want 3", len(recs[0].Relations))
+	}
+}
+
+func TestBrowseRecordingsByWork_NonOKStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"bad work id"}`))
+	}))
+	defer server.Close()
+	if _, err := browseRecordingsByWork(server.URL, "garbage"); err == nil {
+		t.Fatal("expected error for HTTP 400, got nil")
+	}
+}
+
+func TestGroupRecordings(t *testing.T) {
+	// Build the recordings from the canned response so the test mirrors
+	// the live shape.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(cannedRecordingsResponse))
+	}))
+	defer server.Close()
+	recs, err := browseRecordingsByWork(server.URL, "any")
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	got := groupRecordings(recs)
+	if len(got) != 3 {
+		t.Fatalf("got %d performances, want 3 (Karajan grouped, Gardiner, no-relations)", len(got))
+	}
+
+	// Sorted year-desc: 1985, 1980, "".
+	if got[0].Year != "1985" || got[0].Conductor != "Gardiner" {
+		t.Errorf("got[0] = %+v, want Gardiner 1985", got[0])
+	}
+	if got[1].Year != "1980" || got[1].Conductor != "Karajan" {
+		t.Errorf("got[1] = %+v, want Karajan 1980", got[1])
+	}
+	if got[2].Year != "" || got[2].Conductor != "" {
+		t.Errorf("got[2] = %+v, want empty conductor and year", got[2])
+	}
+
+	// Karajan's two movements should have merged vocals: Vienna Singverein
+	// from rec-1 plus Edith Mathis from rec-2, in first-seen order.
+	want := []string{"Vienna Singverein", "Edith Mathis"}
+	if !reflect.DeepEqual(got[1].Vocals, want) {
+		t.Errorf("got[1].Vocals = %v, want %v", got[1].Vocals, want)
+	}
+
+	if got[1].Orchestra != "Berlin Philharmonic" {
+		t.Errorf("got[1].Orchestra = %q", got[1].Orchestra)
+	}
+}
+
 func TestSearchWorks_EmptyResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"count":0,"offset":0,"works":[]}`))
