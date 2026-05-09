@@ -16,22 +16,22 @@ func TestBuildQuery(t *testing.T) {
 		{
 			name: "two args: composer and work",
 			args: []string{"Mozart", "Great Mass in C"},
-			want: `artist:Mozart AND work:"Great Mass in C"`,
+			want: `artist:Mozart AND work:(Great AND Mass AND in AND C)`,
 		},
 		{
 			name: "single arg with multiple words splits on whitespace",
 			args: []string{"Mozart Great Mass in C"},
-			want: `artist:Mozart AND work:"Great Mass in C"`,
+			want: `artist:Mozart AND work:(Great AND Mass AND in AND C)`,
 		},
 		{
 			name: "many unquoted shell args join into work name",
 			args: []string{"Mozart", "Great", "Mass", "in", "C"},
-			want: `artist:Mozart AND work:"Great Mass in C"`,
+			want: `artist:Mozart AND work:(Great AND Mass AND in AND C)`,
 		},
 		{
-			name: "composer with spaces is preserved when quoted as one arg",
+			name: "composer with spaces uses AND inside parens",
 			args: []string{"Wolfgang Amadeus Mozart", "Great Mass in C"},
-			want: `artist:Wolfgang Amadeus Mozart AND work:"Great Mass in C"`,
+			want: `artist:(Wolfgang AND Amadeus AND Mozart) AND work:(Great AND Mass AND in AND C)`,
 		},
 		{
 			name: "single word falls back to unstructured query",
@@ -39,9 +39,14 @@ func TestBuildQuery(t *testing.T) {
 			want: "Mozart",
 		},
 		{
-			name: "embedded double quotes are stripped",
-			args: []string{`Mozart`, `Great "Mass" in C`},
-			want: `artist:Mozart AND work:"Great Mass in C"`,
+			name: "Bach Mass in B minor uses AND so all words must match",
+			args: []string{"Bach", "Mass in B minor"},
+			want: `artist:Bach AND work:(Mass AND in AND B AND minor)`,
+		},
+		{
+			name: "Lucene-special characters are stripped from input",
+			args: []string{"Mozart", `Great "Mass" (extra) in C`},
+			want: `artist:Mozart AND work:(Great AND Mass AND extra AND in AND C)`,
 		},
 	}
 	for _, tt := range tests {
@@ -60,6 +65,9 @@ func TestFilterMovements(t *testing.T) {
 		{Title: "Great Mass in C minor, K. 427: II. Gloria", Type: ""},
 		{Title: "Mass in C: Kyrie", Type: ""},
 		{Title: "Mozart!", Type: "Musical"},
+		// Movements that carry the parent's type — must still be dropped.
+		{Title: "h-Moll-Messe, BWV 232: III. Sanctus", Type: "Mass"},
+		{Title: "Benedictus from Mass in B minor, BWV 232", Type: "Mass"},
 	}
 	got := filterMovements(in)
 	wantTitles := []string{
@@ -153,7 +161,7 @@ func TestSearchWorks_ParsesResponse(t *testing.T) {
 		if got := r.Header.Get("User-Agent"); got != userAgent {
 			t.Errorf("User-Agent = %q, want %q", got, userAgent)
 		}
-		if got := r.URL.Query().Get("query"); got != `artist:Mozart AND work:"Great Mass in C"` {
+		if got := r.URL.Query().Get("query"); got != `artist:Mozart AND work:(Great AND Mass AND in AND C)` {
 			t.Errorf("query param = %q, want structured query", got)
 		}
 		if got := r.URL.Query().Get("fmt"); got != "json" {
@@ -164,7 +172,7 @@ func TestSearchWorks_ParsesResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	works, err := searchWorks(server.URL, `artist:Mozart AND work:"Great Mass in C"`)
+	works, err := searchWorks(server.URL, `artist:Mozart AND work:(Great AND Mass AND in AND C)`)
 	if err != nil {
 		t.Fatalf("searchWorks returned error: %v", err)
 	}

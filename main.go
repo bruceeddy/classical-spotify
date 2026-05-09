@@ -44,6 +44,12 @@ type WorkSearchResponse struct {
 // composer and the rest is the work name. If a single arg is supplied,
 // it's split on whitespace under the same convention. A single word is
 // passed through unstructured.
+//
+// Multi-word fields are joined with AND inside parens rather than wrapped
+// as a quoted phrase: a quoted phrase requires the words consecutively in
+// the indexed title and misses canonical titles whose word-order or
+// language differs (e.g. "h-Moll-Messe" for Bach's Mass in B minor),
+// while AND requires every word but tolerates surrounding tokens.
 func buildQuery(args []string) string {
 	var composer, work string
 	if len(args) >= 2 {
@@ -57,18 +63,43 @@ func buildQuery(args []string) string {
 		composer = parts[0]
 		work = strings.Join(parts[1:], " ")
 	}
-	composer = strings.ReplaceAll(composer, `"`, ``)
-	work = strings.ReplaceAll(work, `"`, ``)
-	return fmt.Sprintf(`artist:%s AND work:"%s"`, composer, work)
+	return fmt.Sprintf(`artist:%s AND work:%s`,
+		luceneAndGroup(sanitizeLucene(composer)),
+		luceneAndGroup(sanitizeLucene(work)))
+}
+
+// luceneAndGroup joins the words in s with AND and wraps them in parens
+// so the field constraint applies to every word. A single word is left
+// bare.
+func luceneAndGroup(s string) string {
+	words := strings.Fields(s)
+	if len(words) == 1 {
+		return words[0]
+	}
+	return "(" + strings.Join(words, " AND ") + ")"
+}
+
+// sanitizeLucene removes characters from user input that have special
+// meaning in Lucene queries and would otherwise break our `field:(...)`
+// wrapping.
+func sanitizeLucene(s string) string {
+	for _, c := range []string{`"`, `(`, `)`} {
+		s = strings.ReplaceAll(s, c, "")
+	}
+	return s
 }
 
 // filterMovements drops Work entities that are individual movements of a
-// parent work. Movements come back with an empty `type`, while parent
-// works carry a type such as "Mass", "Symphony", or "Concerto".
+// parent work. We use two signals: an empty `type` (most movements), and
+// a movement-style title (": " separator, or "X from Y") which catches
+// the cases where the movement inherits the parent's type.
 func filterMovements(works []Work) []Work {
 	out := works[:0]
 	for _, w := range works {
 		if w.Type == "" {
+			continue
+		}
+		if strings.Contains(w.Title, ": ") || strings.Contains(w.Title, " from ") {
 			continue
 		}
 		out = append(out, w)
