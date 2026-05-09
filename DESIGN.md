@@ -218,11 +218,17 @@ explicitly.
   performances would share a wrong URL. Mitigations would be to
   include soloist names in the verification, or to use Spotify's
   stricter DSL filters with retries.
-- **Lucene escaping is partial.** `buildQuery` strips `"`, `(`, and `)`
-  from user input so they can't break our `field:(...)` wrapping. Other
-  Lucene-special characters (`+ - && || ! { } [ ] ^ ~ * ? : \ /`) pass
-  through unsanitised. Unlikely to bite for classical-music names but
-  worth knowing if a query suddenly errors.
+- **Composer disambiguation may be missing.** Composer resolution in
+  `resolveComposerMBID` requires the MB artist's `disambiguation`
+  field to mark them as a composer ("Russian composer", "classical
+  composer", etc.). Composers whose disambiguation is empty or
+  misleading won't be picked up — the resolver returns "" and we
+  fall back to free-text `artist:<name>`, which works fine when the
+  composer's canonical MB name is Latin but fails for non-Latin
+  canonical names (Cyrillic, etc.). Refining the heuristic (e.g.
+  fall back to first Person if no composer-disambiguated Person
+  exists, or check the artist's work-count signal) would close more
+  of this gap.
 
 ## Out of scope (for now)
 

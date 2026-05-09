@@ -102,6 +102,49 @@ the album ID at search time and feed it into the lookup.
 
 Commit: `fec345c`.
 
+### 6. Composer query precision
+
+Two related fixes for a broader class of query bug discovered when
+testing `./classical Rimsky-Korsakov Scheherazade`, which used to
+return zero results.
+
+#### 6a — Full Lucene-special-character sanitisation
+
+The previous `sanitizeLucene` only stripped `"`, `(`, and `)`. A bare
+hyphen — Lucene's NOT operator — broke any query containing a
+hyphenated composer name: `artist:Rimsky-Korsakov` parsed as
+"Rimsky NOT Korsakov" and returned zero. The sanitiser now replaces
+the full set of Lucene-special characters (`+ - && || ! ( ) { } [ ]
+^ " ~ * ? : \ /`) with single spaces and collapses runs, preserving
+word boundaries — `Rimsky-Korsakov` becomes the AND-grouped
+`(Rimsky AND Korsakov)`. Also unblocks Saint-Saëns and any other
+composer with hyphens or other specials in their name.
+
+Commit: `84fb367`.
+
+#### 6b — Composer MBID resolution via the artist endpoint
+
+Even after 6a, `artist:Rimsky AND Korsakov` returned zero — MB stores
+the composer's canonical name in Cyrillic (`Николай Андреевич
+Римский‐Корсаков`) and the work-search `artist:` field doesn't
+follow Latin aliases. New `resolveComposerMBID` (in `musicbrainz.go`)
+calls `/ws/2/artist/?query=…`, picks the highest-scoring Person
+whose disambiguation marks them as a composer, and returns their
+MBID. `buildQuery` then uses `arid:<MBID>` instead of `artist:<name>`,
+which bypasses name-matching entirely.
+
+The disambiguation filter (`isComposerDisambiguation`) is critical:
+it accepts "Russian composer", "classical composer", "composer"
+alone, but rejects "daughter of the composer" / "musicologist, son
+of the composer", which Maria and Andrey Rimsky-Korsakov carry and
+which would otherwise outrank Nikolai by score (99 / 73 vs his 94).
+
+Live: `./classical Rimsky-Korsakov Scheherazade` now returns 21
+recordings, including Muti / Philadelphia (Warner Classics),
+Goossens / LSO (Everest), and several Sony Classical releases.
+
+Commit: `847b7f2`.
+
 ## Cross-cutting
 
 Alongside the numbered increments:
@@ -124,17 +167,24 @@ Reasonable next directions:
 
 1. **LLM query normalization** (deferred per decision 3 in `DESIGN.md`).
    Most-impactful remaining limitation: would fix `Bach Mass in B minor`
-   returning nothing because MusicBrainz's canonical title is
-   `h-Moll-Messe`. Adds a third optional credential
-   (`ANTHROPIC_API_KEY`) and one external network call per query.
-2. **More display polish.** Truncate long soloist lists; add a `-v`
+   returning nothing because MusicBrainz's canonical work title is
+   `h-Moll-Messe` (composer resolution from increment 6 closes the
+   composer-side equivalent of this gap, but the work side remains).
+   Adds a third optional credential (`ANTHROPIC_API_KEY`) and one
+   external network call per query.
+2. **Refine composer-disambiguation heuristic.** Composers whose MB
+   `disambiguation` is empty or doesn't include "composer" don't
+   resolve via `resolveComposerMBID` and fall back to free-text. Could
+   refine by adding a tier-2 fallback (first Person if no composer-
+   disambiguated Person exists), or by checking work-count signals.
+3. **More display polish.** Truncate long soloist lists; add a `-v`
    flag for verbose vs compact output; colorise headings; visually
    group the Works section into "matched" vs "reached via expansion".
-3. **Recover URLs for sparsely-credited performances.** Extend
+4. **Recover URLs for sparsely-credited performances.** Extend
    `albumMatchScore` to also match against soloist names (or use
    Spotify's stricter DSL with retries), so recordings credited only
    to soloists can still get a verified Spotify URL.
-4. **Cross into "Out of scope."** Playback (Spotify Player API + user
+5. **Cross into "Out of scope."** Playback (Spotify Player API + user
    OAuth, authorization-code flow rather than client-credentials) or
    playlist creation. Bigger lift, different auth shape.
 

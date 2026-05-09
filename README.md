@@ -99,16 +99,24 @@ orchestra) won't get either.
 
 ## How it works
 
-1. **Query.** Your input is split into composer + work and emitted as
-   `artist:<composer> AND work:(<word> AND <word> AND …)`. Words inside
-   each side are AND-grouped so all must appear, but the order and
-   surrounding tokens are flexible — this is what lets `Bach BWV 232`
-   match the canonical `h-Moll-Messe, BWV 232`.
-2. **Work search.** A `GET /ws/2/work?query=…` against MusicBrainz
-   returns matching Works. Entries that look like a movement (title
-   contains `": "` or `" from "`, or has no top-level `type`) are
-   filtered out so we get the parent work rather than its individual
-   movements.
+1. **Query.** Your input is split into composer + work. The composer
+   string is resolved against MusicBrainz's artist endpoint to find a
+   Person whose disambiguation marks them as a composer; their MBID
+   is stored. This step bypasses MB's name-matching, which doesn't
+   follow Latin aliases — important for composers stored under a
+   non-Latin canonical name (Rimsky-Korsakov, Tchaikovsky, etc.).
+   The work side is emitted as `work:(<word> AND <word> AND …)`,
+   AND-grouped so all words must appear but order and surrounding
+   tokens are flexible (this is what lets `Bach BWV 232` match the
+   canonical `h-Moll-Messe, BWV 232`). Lucene-special characters in
+   the input are replaced with spaces so things like `Rimsky-Korsakov`
+   don't get mangled by Lucene's NOT operator.
+2. **Work search.** A `GET /ws/2/work?query=arid:<MBID> AND work:(…)`
+   against MusicBrainz returns matching Works. (When composer
+   resolution fails the artist clause falls back to `artist:<name>`.)
+   Entries that look like a movement (title contains `": "` or
+   `" from "`, or has no top-level `type`) are filtered out so we
+   get the parent work rather than its individual movements.
 3. **Edition expansion.** Classical works in MB are typically split
    across several "edition" Work entities (e.g. K.427 has Maunder,
    Levin, fragment, and several reconstruction Works), connected by
@@ -156,6 +164,10 @@ public API requires.
 - **Quote multi-word composer names.** `./classical Wolfgang Amadeus
   Mozart Great Mass in C` will treat "Wolfgang" as the composer surname.
   Use `./classical "Wolfgang Amadeus Mozart" "Great Mass in C"` instead.
+- **Hyphenated names work.** `./classical Rimsky-Korsakov Scheherazade`
+  resolves the composer to his MusicBrainz MBID and uses that for the
+  work search, so the query reaches works stored under his Cyrillic
+  canonical name.
 - **Cross-edition gaps (mostly closed).** Classical works often have
   several MusicBrainz "edition" entities (e.g. K.427 has Maunder, Levin,
   fragment, and several reconstructions). Recordings link to whichever
