@@ -126,17 +126,29 @@ playable recordings in one response.
   list; the user has to read titles in the Works section to tell
   which Performance belongs to which Work.
 
-### 6. Spotify mapping: prefer MB URL relationships, fall back to search
+### 6. Spotify mapping: prefer MB URL relationships, fall back to verified search
 
 **Decision.** For each Recording, use MusicBrainz's `url-rels` Spotify link
-when present. When absent, search Spotify with composer + work + conductor +
-orchestra and pick the best string-similarity match against the album title.
+when present. When absent, search Spotify (limit=10) with composer + work
++ conductor + orchestra, score each candidate album by whether the
+performance's conductor (worth 2) or orchestra (worth 1) appears in the
+album's artist credits or its name, and attach the highest-scoring
+candidate's URL. If no candidate scores at all, attach nothing — silent
+wrongness is worse than honest absence.
+
+**Why verification.** Live testing revealed Spotify's relevance ranking
+returns the *least-bad* candidate even when no real match exists. A
+blind first-result pick attached "Celestial Bliss" by Felix Lancaster
+to a Mozart Mass performance because the album name happened to contain
+"Mass". Verification by performer credit closes that hole.
 
 **Trade-offs.**
-- (+) Authoritative when MB has the link.
-- (−) Fallback search will sometimes pick the wrong album or miss the
-  recording entirely. Accepted as a known limitation; scoring can be improved
-  later, including by introducing an LLM (see decision 3).
+- (+) Authoritative when MB has the link; honestly-empty otherwise.
+- (−) Performances where MB credits a conductor / orchestra that
+  Spotify doesn't list in its album metadata will lose their URL even
+  when the album is in fact correct. Mitigations would include matching
+  against vocal credits or release year, or introducing an LLM-based
+  similarity check.
 
 ### 7. Group recordings by performer fingerprint
 
@@ -190,17 +202,16 @@ explicitly.
   under a shared `Vocal:` line in the output. Distinguishing them would
   require a follow-up lookup on each artist's MB entity type
   (Choir vs Person).
-- **Same Spotify URL for sparsely-credited performances.** The Spotify
-  search query is built from `(composer, work, conductor, orchestra)`
-  with empty fields skipped. Two distinct performances that both lack
-  a conductor *and* an orchestra (e.g. recordings credited only to
-  soloists) produce identical search queries, and Spotify's relevance
-  ranking returns the same top album for both — so they end up sharing
-  a Spotify URL even though they're different performances. Observed
-  live in `./classical Bach BWV 232` for the two no-conductor entries.
-  Mitigations would be to include soloist names in the query, or to
-  switch from free-text search to Spotify's stricter DSL filters
-  (`album:` + `artist:`).
+- **No Spotify URL for sparsely-credited performances.** The Spotify
+  match-verification step (decision 6) requires the performance's
+  conductor or orchestra to appear in the candidate album's artist
+  credits or name. Performances credited only to soloists — no
+  conductor, no orchestra — therefore produce a verification score of
+  0 and get no URL attached, even when the recording is in fact on
+  Spotify. This replaces an earlier worse failure mode where two such
+  performances would share a wrong URL. Mitigations would be to
+  include soloist names in the verification, or to use Spotify's
+  stricter DSL filters with retries.
 - **Lucene escaping is partial.** `buildQuery` strips `"`, `(`, and `)`
   from user input so they can't break our `field:(...)` wrapping. Other
   Lucene-special characters (`+ - && || ! { } [ ] ^ ~ * ? : \ /`) pass

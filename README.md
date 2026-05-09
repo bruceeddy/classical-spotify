@@ -81,18 +81,18 @@ Recordings (4):
 
 2. 2002  Christian Brembeck
    Orchestra: Capella Istropolitana
-   Spotify:   https://open.spotify.com/album/1MqMfzyUUDKb1hkT8q3AtI
 
 3. 1996  (no conductor credited)
    Vocal:     Markus Brutscher, Johanna Koslowsky, …
-   Spotify:   https://open.spotify.com/album/3ELfX4GIPcYOTJBl8PdoKi
 
 4. ????  (no conductor credited)
    Vocal:     Hana Blažíková, David Erler, Peter Harvey, …
-   Spotify:   https://open.spotify.com/album/3ELfX4GIPcYOTJBl8PdoKi
 ```
 
-(Without Spotify credentials the `Spotify:` lines are absent.)
+`Spotify:` is only shown for performances where the search-result
+album could be verified by conductor or orchestra match — sparsely
+credited recordings (no conductor and no orchestra) won't get a URL.
+Without Spotify credentials the `Spotify:` line is absent for all.
 
 ## How it works
 
@@ -124,10 +124,14 @@ Recordings (4):
 6. **Spotify URLs (optional).** For each Performance we either reuse a
    Spotify URL the recording already had via MusicBrainz `url-rels`,
    or, if absent, fall back to a Spotify album search (composer + work
-   + conductor + orchestra) and attach the first matching album's URL.
-   MB's `url-rels` coverage for Spotify is essentially zero in practice
-   for classical recordings, so the fallback does almost all the
-   work. Without credentials the step is skipped.
+   + conductor + orchestra). Search results are then *verified*: a
+   candidate album is only attached if the performance's conductor or
+   orchestra appears in the album's artist credits or name. If nothing
+   passes verification the URL is left empty — better no URL than the
+   wrong one, since Spotify's ranking happily returns unrelated albums
+   when no real match exists. MB's `url-rels` coverage is essentially
+   zero in practice, so the verified fallback does almost all the
+   work. Without credentials the whole step is skipped.
 
 A descriptive `User-Agent` is sent on every MusicBrainz request, as the
 public API requires.
