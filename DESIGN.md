@@ -172,6 +172,17 @@ explicitly.
   under a shared `Vocal:` line in the output. Distinguishing them would
   require a follow-up lookup on each artist's MB entity type
   (Choir vs Person).
+- **Same Spotify URL for sparsely-credited performances.** The Spotify
+  search query is built from `(composer, work, conductor, orchestra)`
+  with empty fields skipped. Two distinct performances that both lack
+  a conductor *and* an orchestra (e.g. recordings credited only to
+  soloists) produce identical search queries, and Spotify's relevance
+  ranking returns the same top album for both — so they end up sharing
+  a Spotify URL even though they're different performances. Observed
+  live in `./classical Bach BWV 232` for the two no-conductor entries.
+  Mitigations would be to include soloist names in the query, or to
+  switch from free-text search to Spotify's stricter DSL filters
+  (`album:` + `artist:`).
 - **Lucene escaping is partial.** `buildQuery` strips `"`, `(`, and `)`
   from user input so they can't break our `field:(...)` wrapping. Other
   Lucene-special characters (`+ - && || ! { } [ ] ^ ~ * ? : \ /`) pass

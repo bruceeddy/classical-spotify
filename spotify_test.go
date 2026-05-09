@@ -113,6 +113,20 @@ func TestSearchSpotifyAlbums_NonOKStatus(t *testing.T) {
 	}
 }
 
+func TestFillSpotifyURLs_MissingCreds(t *testing.T) {
+	t.Setenv("SPOTIFY_CLIENT_ID", "")
+	t.Setenv("SPOTIFY_CLIENT_SECRET", "")
+
+	perfs := []Performance{{Conductor: "Karajan"}}
+	err := fillSpotifyURLs(perfs, "Mozart", "Great Mass in C")
+	if err == nil {
+		t.Fatal("expected error when creds missing, got nil")
+	}
+	if perfs[0].SpotifyURL != "" {
+		t.Errorf("SpotifyURL was populated despite missing creds: %q", perfs[0].SpotifyURL)
+	}
+}
+
 func TestSpotifyQueryFor(t *testing.T) {
 	tests := []struct {
 		name     string

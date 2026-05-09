@@ -2,6 +2,30 @@ package main
 
 import "testing"
 
+func TestParseQueryArgs(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		composer string
+		work     string
+	}{
+		{"no args", []string{}, "", ""},
+		{"two args: composer and work", []string{"Mozart", "Great Mass in C"}, "Mozart", "Great Mass in C"},
+		{"five unquoted args", []string{"Mozart", "Great", "Mass", "in", "C"}, "Mozart", "Great Mass in C"},
+		{"single multi-word arg", []string{"Mozart Great Mass in C"}, "Mozart", "Great Mass in C"},
+		{"single word, no work", []string{"Mozart"}, "Mozart", ""},
+		{"composer with spaces (quoted)", []string{"Wolfgang Amadeus Mozart", "Great Mass in C"}, "Wolfgang Amadeus Mozart", "Great Mass in C"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotC, gotW := parseQueryArgs(tt.args)
+			if gotC != tt.composer || gotW != tt.work {
+				t.Errorf("parseQueryArgs(%v) = (%q, %q), want (%q, %q)", tt.args, gotC, gotW, tt.composer, tt.work)
+			}
+		})
+	}
+}
+
 func TestBuildQuery(t *testing.T) {
 	tests := []struct {
 		name string
