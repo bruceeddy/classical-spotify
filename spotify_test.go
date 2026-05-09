@@ -77,8 +77,8 @@ func TestSearchSpotifyAlbums_ParsesAndSendsBearer(t *testing.T) {
 		if got := q.Get("type"); got != "album" {
 			t.Errorf("type = %q, want album", got)
 		}
-		if got := q.Get("limit"); got != "5" {
-			t.Errorf("limit = %q, want 5", got)
+		if got := q.Get("limit"); got != "10" {
+			t.Errorf("limit = %q, want 10", got)
 		}
 		w.Write([]byte(cannedSpotifyAlbumSearchResponse))
 	}))
@@ -125,6 +125,132 @@ func TestFillSpotifyURLs_MissingCreds(t *testing.T) {
 	if perfs[0].SpotifyURL != "" {
 		t.Errorf("SpotifyURL was populated despite missing creds: %q", perfs[0].SpotifyURL)
 	}
+}
+
+func TestAlbumMatchScore(t *testing.T) {
+	tests := []struct {
+		name string
+		alb  SpotifyAlbum
+		perf Performance
+		want int
+	}{
+		{
+			name: "conductor in artists scores 2",
+			alb: SpotifyAlbum{
+				Name:    "Mozart: Mass in C minor",
+				Artists: []SpotifyArtistRef{{Name: "Frieder Bernius"}, {Name: "Hofkapelle Stuttgart"}},
+			},
+			perf: Performance{Conductor: "Frieder Bernius"},
+			want: 2,
+		},
+		{
+			name: "conductor in album name (not artists) also scores 2",
+			alb: SpotifyAlbum{
+				Name:    "Karajan conducts Mozart",
+				Artists: []SpotifyArtistRef{{Name: "Berlin Philharmonic"}},
+			},
+			perf: Performance{Conductor: "Karajan"},
+			want: 2,
+		},
+		{
+			name: "orchestra in artists scores 1",
+			alb: SpotifyAlbum{
+				Name:    "Mozart: Great Mass",
+				Artists: []SpotifyArtistRef{{Name: "Hofkapelle Stuttgart"}},
+			},
+			perf: Performance{Orchestra: "Hofkapelle Stuttgart"},
+			want: 1,
+		},
+		{
+			name: "conductor + orchestra both match: scores add to 3",
+			alb: SpotifyAlbum{
+				Name:    "Mozart: Great Mass in C",
+				Artists: []SpotifyArtistRef{{Name: "Frieder Bernius"}, {Name: "Hofkapelle Stuttgart"}},
+			},
+			perf: Performance{Conductor: "Frieder Bernius", Orchestra: "Hofkapelle Stuttgart"},
+			want: 3,
+		},
+		{
+			name: "irrelevant album scores 0 (the Bernius -> Celestial Bliss case)",
+			alb: SpotifyAlbum{
+				Name:    "Celestial Bliss",
+				Artists: []SpotifyArtistRef{{Name: "Felix Lancaster"}},
+			},
+			perf: Performance{Conductor: "Frieder Bernius", Orchestra: "Hofkapelle Stuttgart"},
+			want: 0,
+		},
+		{
+			name: "irrelevant album scores 0 (the Esterházy -> Rain Sounds Symphony case)",
+			alb: SpotifyAlbum{
+				Name:    "Rain Sounds Symphony",
+				Artists: []SpotifyArtistRef{{Name: "Sleep Inducers"}},
+			},
+			perf: Performance{Orchestra: "Nicolaus Esterházy Sinfonia"},
+			want: 0,
+		},
+		{
+			name: "case-insensitive substring match",
+			alb: SpotifyAlbum{
+				Name:    "MOZART MASS IN C",
+				Artists: []SpotifyArtistRef{{Name: "FRIEDER BERNIUS"}},
+			},
+			perf: Performance{Conductor: "Frieder Bernius"},
+			want: 2,
+		},
+		{
+			name: "empty performance scores 0 (no signals to match)",
+			alb: SpotifyAlbum{
+				Name:    "Mozart: Mass in C",
+				Artists: []SpotifyArtistRef{{Name: "Some Conductor"}},
+			},
+			perf: Performance{},
+			want: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := albumMatchScore(tt.alb, tt.perf); got != tt.want {
+				t.Errorf("albumMatchScore() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBestMatchingAlbum(t *testing.T) {
+	perf := Performance{Conductor: "Bernius", Orchestra: "Hofkapelle Stuttgart"}
+
+	t.Run("picks highest scoring album", func(t *testing.T) {
+		albums := []SpotifyAlbum{
+			{Name: "Random Mass", Artists: []SpotifyArtistRef{{Name: "Hofkapelle Stuttgart"}}}, // score 1
+			{Name: "Mozart: Mass in C", Artists: []SpotifyArtistRef{{Name: "Bernius"}, {Name: "Hofkapelle Stuttgart"}}, ExternalURLs: SpotifyExternalURLs{Spotify: "right"}}, // score 3
+			{Name: "Other Mozart", Artists: []SpotifyArtistRef{{Name: "Bernius"}}}, // score 2
+		}
+		got, ok := bestMatchingAlbum(albums, perf)
+		if !ok {
+			t.Fatal("expected ok=true, got false")
+		}
+		if got.ExternalURLs.Spotify != "right" {
+			t.Errorf("picked %q, want the score-3 album", got.ExternalURLs.Spotify)
+		}
+	})
+
+	t.Run("rejects when all candidates score zero", func(t *testing.T) {
+		albums := []SpotifyAlbum{
+			{Name: "Celestial Bliss", Artists: []SpotifyArtistRef{{Name: "Felix Lancaster"}}, ExternalURLs: SpotifyExternalURLs{Spotify: "wrong-1"}},
+			{Name: "Rain Sounds Symphony", Artists: []SpotifyArtistRef{{Name: "Sleep Inducers"}}, ExternalURLs: SpotifyExternalURLs{Spotify: "wrong-2"}},
+		}
+		_, ok := bestMatchingAlbum(albums, perf)
+		if ok {
+			t.Error("expected ok=false when no candidate matches; got true")
+		}
+	})
+
+	t.Run("empty candidate list returns ok=false", func(t *testing.T) {
+		_, ok := bestMatchingAlbum(nil, perf)
+		if ok {
+			t.Error("expected ok=false on empty list")
+		}
+	})
 }
 
 func TestSpotifyQueryFor(t *testing.T) {

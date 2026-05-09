@@ -80,7 +80,7 @@ func searchSpotifyAlbums(searchURL, token, query string) ([]SpotifyAlbum, error)
 	params := url.Values{}
 	params.Add("q", query)
 	params.Add("type", "album")
-	params.Add("limit", "5")
+	params.Add("limit", "10")
 
 	req, err := http.NewRequest("GET", searchURL+"?"+params.Encode(), nil)
 	if err != nil {
@@ -107,6 +107,54 @@ func searchSpotifyAlbums(searchURL, token, query string) ([]SpotifyAlbum, error)
 		return nil, err
 	}
 	return sr.Albums.Items, nil
+}
+
+// albumMatchScore scores how strongly a Spotify album appears to
+// belong to a given Performance. Conductor matches (in the album's
+// artist credits or its name) are worth 2; orchestra matches are
+// worth 1. Empty Performance fields contribute 0 and don't penalise.
+//
+// This exists because Spotify's relevance ranking returns the
+// "least bad" candidate even when no real match exists, so a
+// blind first-result pick attached unrelated albums (e.g. "Rain
+// Sounds Symphony") to genuine performances.
+func albumMatchScore(alb SpotifyAlbum, p Performance) int {
+	artistsBlob := ""
+	for _, a := range alb.Artists {
+		artistsBlob += strings.ToLower(a.Name) + " | "
+	}
+	name := strings.ToLower(alb.Name)
+	score := 0
+	if c := strings.ToLower(p.Conductor); c != "" {
+		if strings.Contains(artistsBlob, c) || strings.Contains(name, c) {
+			score += 2
+		}
+	}
+	if o := strings.ToLower(p.Orchestra); o != "" {
+		if strings.Contains(artistsBlob, o) || strings.Contains(name, o) {
+			score += 1
+		}
+	}
+	return score
+}
+
+// bestMatchingAlbum picks the highest-scoring album for the given
+// Performance. Returns ok=false when no candidate scores at all —
+// callers should leave the SpotifyURL empty in that case rather than
+// attaching a wrong URL.
+func bestMatchingAlbum(albums []SpotifyAlbum, p Performance) (SpotifyAlbum, bool) {
+	bestScore := 0
+	var best SpotifyAlbum
+	for _, alb := range albums {
+		if s := albumMatchScore(alb, p); s > bestScore {
+			bestScore = s
+			best = alb
+		}
+	}
+	if bestScore == 0 {
+		return SpotifyAlbum{}, false
+	}
+	return best, true
 }
 
 // spotifyQueryFor builds an album-search query from the user's
@@ -149,8 +197,8 @@ func fillSpotifyURLs(performances []Performance, composer, work string) error {
 			fmt.Fprintf(os.Stderr, "Spotify search failed for performance %d: %v\n", i+1, err)
 			continue
 		}
-		if len(albums) > 0 {
-			performances[i].SpotifyURL = albums[0].ExternalURLs.Spotify
+		if best, ok := bestMatchingAlbum(albums, performances[i]); ok {
+			performances[i].SpotifyURL = best.ExternalURLs.Spotify
 		}
 	}
 	return nil
