@@ -155,14 +155,17 @@ explicitly.
   Workarounds: use the catalog number (`Bach BWV 232`) or the canonical
   title (`Bach h-Moll-Messe`). The long-term fix is the deferred LLM
   normalization layer (decision 3).
-- **Cross-edition aggregation.** MB models a single classical work as
-  several sibling "edition" Works (e.g. K.427 has Maunder, Levin, and the
-  original-fragment "Große Messe" as separate MBIDs) linked by
-  `other version` relations. Recordings link to whichever edition their
-  album metadata cites. We don't follow those relations. Concrete
-  consequence: `Mozart Great Mass in C` finds the Rilling / Levin
-  recording but misses Karajan and Gardiner, whose recordings are linked
-  to a different edition Work that doesn't surface in our top matches.
+- **Cross-edition aggregation, residual gaps.** Increment 4 closed the
+  worst version of this limitation by walking MB's `other version`
+  relations two hops out and aggregating recordings across the
+  resulting set (`expandEditions` in `musicbrainz.go`). `Mozart Great
+  Mass in C` now reaches 6 distinct performances (Bernius, Dijkstra,
+  Rilling, Harnoncourt, …) across 5 sibling editions of K.427.
+  Residual gaps remain: caps of `maxEditionHops = 2` and
+  `maxWorksToBrowse = 10` mean very large edition families get
+  truncated, and recordings linked to an edition entity that's
+  neither in our top search results nor reachable in two hops are
+  still hidden.
 - **Composer-as-first-token heuristic.** `buildQuery` treats the first
   shell arg (or, with a single arg, the first whitespace-separated token)
   as the composer surname. Multi-word composers must be shell-quoted as

@@ -51,6 +51,25 @@ and the tool continues MusicBrainz-only.
 
 Commit: `3ec4d9f`.
 
+### 4. Cross-edition aggregation
+
+Walks MusicBrainz's `other version` relation graph two hops out from
+each matched Work and aggregates recordings across the resulting set.
+Closes the worst case of the cross-edition gap noted in `DESIGN.md`'s
+Known Limitations: a query for Mozart's K.427 used to find only the
+Rilling / Levin recording (because the canonical search returned the
+Maunder + Levin editions and only Levin had recordings linked); after
+expansion it reaches 6 distinct performances across 5 sibling
+editions, including Harnoncourt, Bernius, and Dijkstra. Bach BWV 232's
+parent Work has no `other version` edges, so its result is unchanged.
+
+Capped at `maxEditionHops = 2` and `maxWorksToBrowse = 10` to keep
+the API budget under MusicBrainz's 1 req/sec ceiling. A note in
+the output ("(N additional Work(s) reached via MusicBrainz 'other
+version' relations.)") makes the expansion transparent.
+
+Commit: `afe36a8`.
+
 ## Cross-cutting
 
 Alongside the numbered increments:
@@ -69,22 +88,17 @@ Alongside the numbered increments:
 
 ## To come
 
-Increment 4 was originally drafted as "grouping / display polish," but
-grouping had to happen in Increment 2 to print anything useful and
-display was iterated through 2 and 3 — so the original Increment 4 is
-largely already done. Three reasonable directions for what to do next:
+Reasonable next directions:
 
 1. **Display / UX polish.** Truncate long vocal lists; add a flag for
-   verbose vs compact output; cap displayed performances; colorise
-   headings. Small and contained.
-2. **Address a known limitation from `DESIGN.md`.** Most impactful
-   candidates:
-   - *Cross-edition aggregation* — follow MB `other version` relations
-     so a query for K.427 surfaces Karajan and Gardiner (currently
-     hidden because their recordings link to a different edition
-     entity).
-   - *LLM query normalization* (deferred per decision 3) — would fix
-     `Bach Mass in B minor` returning nothing.
+   verbose vs compact output; colorise headings; group the displayed
+   Works section into "matched" vs "reached via expansion" sub-sections.
+   Small and contained.
+2. **Address another known limitation from `DESIGN.md`.** Most
+   impactful candidate now that cross-edition aggregation is done:
+   *LLM query normalization* (deferred per decision 3) — would fix
+   `Bach Mass in B minor` returning nothing because MusicBrainz's
+   canonical title is `h-Moll-Messe`.
 3. **Cross into "Out of scope."** Playback (Spotify Player API + user
    OAuth, authorization-code flow rather than client-credentials) or
    playlist creation. Bigger lift, different auth shape.

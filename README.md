@@ -106,15 +106,22 @@ Recordings (4):
    contains `": "` or `" from "`, or has no top-level `type`) are
    filtered out so we get the parent work rather than its individual
    movements.
-3. **Recording browse.** For each remaining Work (capped at the top 5),
-   we call `GET /ws/2/recording?work=<MBID>&inc=artist-credits+artist-rels`
+3. **Edition expansion.** Classical works in MB are typically split
+   across several "edition" Work entities (e.g. K.427 has Maunder,
+   Levin, fragment, and several reconstruction Works), connected by
+   `other version` relations, and recordings link to whichever
+   edition's metadata cites them. We BFS over those relations from
+   each matched Work, two hops out, capped at 10 total Works, so a
+   single query aggregates recordings across the whole edition family.
+4. **Recording browse.** For each Work in the expanded set, we call
+   `GET /ws/2/recording?work=<MBID>&inc=artist-credits+artist-rels+url-rels`
    to get the recordings, with one second between calls to respect
    MusicBrainz's public rate limit.
-4. **Group.** Recordings are deduplicated into Performances by
+5. **Group.** Recordings are deduplicated into Performances by
    `(conductor, orchestra, year)`. Vocal credits (choirs and soloists,
    both tagged `vocal` by MusicBrainz) are merged across movements of
    the same performance, then printed sorted year-descending.
-5. **Spotify URLs (optional).** For each Performance we either reuse a
+6. **Spotify URLs (optional).** For each Performance we either reuse a
    Spotify URL the recording already had via MusicBrainz `url-rels`,
    or, if absent, fall back to a Spotify album search (composer + work
    + conductor + orchestra) and attach the first matching album's URL.
@@ -135,12 +142,14 @@ public API requires.
 - **Quote multi-word composer names.** `./classical Wolfgang Amadeus
   Mozart Great Mass in C` will treat "Wolfgang" as the composer surname.
   Use `./classical "Wolfgang Amadeus Mozart" "Great Mass in C"` instead.
-- **Cross-edition gaps.** Classical works often have several MusicBrainz
-  "edition" entities (e.g. K.427 has Maunder, Levin, and original-fragment
-  entries). Recordings link to whichever edition's metadata cites them,
-  so a query may miss famous recordings linked to an edition that
-  doesn't surface in the top matches. Try a more specific query or use
-  the catalog number.
+- **Cross-edition gaps (mostly closed).** Classical works often have
+  several MusicBrainz "edition" entities (e.g. K.427 has Maunder, Levin,
+  fragment, and several reconstructions). Recordings link to whichever
+  edition's metadata cites them. The tool walks MB's `other version`
+  relations two hops from the matched Works to aggregate across the
+  family, so most editions are reached automatically. Recordings linked
+  to editions further than two hops, or to editions that don't appear
+  in the top search results at all, can still be missed.
 - **MusicBrainz isn't uniformly populated.** Some recordings are
   missing a conductor, orchestra, or release date and show as
   `(no conductor credited)` / `????` in the output.
