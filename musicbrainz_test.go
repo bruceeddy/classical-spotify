@@ -236,8 +236,8 @@ func TestBrowseRecordingsByWork_ParsesAndSendsParams(t *testing.T) {
 		if got := q.Get("fmt"); got != "json" {
 			t.Errorf("fmt param = %q", got)
 		}
-		if got := q.Get("inc"); got != "artist-credits artist-rels" {
-			t.Errorf("inc param = %q, want space-separated 'artist-credits artist-rels'", got)
+		if got := q.Get("inc"); got != "artist-credits artist-rels url-rels" {
+			t.Errorf("inc param = %q, want space-separated 'artist-credits artist-rels url-rels'", got)
 		}
 		w.Write([]byte(cannedRecordingsResponse))
 	}))

@@ -46,8 +46,13 @@ type Recording struct {
 }
 
 type RecordingRelation struct {
-	Type   string      `json:"type"`
-	Artist *WorkArtist `json:"artist,omitempty"`
+	Type   string       `json:"type"`
+	Artist *WorkArtist  `json:"artist,omitempty"`
+	URL    *RelationURL `json:"url,omitempty"`
+}
+
+type RelationURL struct {
+	Resource string `json:"resource"`
 }
 
 type RecordingBrowseResponse struct {
@@ -99,7 +104,7 @@ func browseRecordingsByWork(baseURL, workID string) ([]Recording, error) {
 	params := url.Values{}
 	params.Add("work", workID)
 	params.Add("fmt", "json")
-	params.Add("inc", "artist-credits artist-rels")
+	params.Add("inc", "artist-credits artist-rels url-rels")
 	params.Add("limit", "100")
 
 	var resp RecordingBrowseResponse

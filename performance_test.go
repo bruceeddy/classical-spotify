@@ -19,6 +19,8 @@ func TestGroupRecordings(t *testing.T) {
 				{Type: "conductor", Artist: &WorkArtist{Name: "Karajan"}},
 				{Type: "performing orchestra", Artist: &WorkArtist{Name: "Berlin Philharmonic"}},
 				{Type: "vocal", Artist: &WorkArtist{Name: "Vienna Singverein"}},
+				// Non-Spotify URL — must NOT be picked up.
+				{Type: "free streaming", URL: &RelationURL{Resource: "http://allofbach.com/en/bwv/bwv-232/"}},
 			},
 		},
 		{
@@ -29,6 +31,9 @@ func TestGroupRecordings(t *testing.T) {
 				{Type: "performing orchestra", Artist: &WorkArtist{Name: "Berlin Philharmonic"}},
 				{Type: "vocal", Artist: &WorkArtist{Name: "Vienna Singverein"}},
 				{Type: "vocal", Artist: &WorkArtist{Name: "Edith Mathis"}},
+				// Spotify URL on the second movement — should propagate to
+				// the merged Karajan performance.
+				{Type: "streaming", URL: &RelationURL{Resource: "https://open.spotify.com/track/karajan-gloria"}},
 			},
 		},
 		{
@@ -71,5 +76,17 @@ func TestGroupRecordings(t *testing.T) {
 
 	if got[1].Orchestra != "Berlin Philharmonic" {
 		t.Errorf("got[1].Orchestra = %q", got[1].Orchestra)
+	}
+
+	// MB-supplied Spotify URL must propagate to the merged performance,
+	// while the non-Spotify URL on the same group must be ignored.
+	if got[1].SpotifyURL != "https://open.spotify.com/track/karajan-gloria" {
+		t.Errorf("got[1].SpotifyURL = %q, want the spotify URL from the Gloria movement", got[1].SpotifyURL)
+	}
+
+	// Performances without an MB-supplied Spotify URL must stay empty —
+	// the search-based fallback fills these in later.
+	if got[0].SpotifyURL != "" {
+		t.Errorf("got[0].SpotifyURL = %q, want empty (Gardiner has no MB-supplied URL)", got[0].SpotifyURL)
 	}
 }

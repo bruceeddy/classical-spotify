@@ -1,16 +1,23 @@
 package main
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // Performance is one distinct recording of a Work, identified by the
 // (conductor, orchestra, year) fingerprint. Vocals collects every choir
 // or vocal-soloist credit seen across the recordings that share the
-// fingerprint.
+// fingerprint. SpotifyURL holds the first Spotify URL surfaced via
+// MusicBrainz `url-rels` on any of the grouped recordings; it stays
+// empty when no MB-supplied URL is present (the Spotify-search
+// fallback fills it in later).
 type Performance struct {
-	Conductor string
-	Orchestra string
-	Year      string
-	Vocals    []string
+	Conductor  string
+	Orchestra  string
+	Year       string
+	Vocals     []string
+	SpotifyURL string
 }
 
 // groupRecordings deduplicates a list of recordings into Performances by
@@ -23,19 +30,21 @@ func groupRecordings(recs []Recording) []Performance {
 	byKey := map[key]*Performance{}
 	var order []key
 	for _, r := range recs {
-		var conductor, orchestra string
+		var conductor, orchestra, spotifyURL string
 		var vocals []string
 		for _, rel := range r.Relations {
-			if rel.Artist == nil {
-				continue
+			if rel.Artist != nil {
+				switch rel.Type {
+				case "conductor":
+					conductor = rel.Artist.Name
+				case "performing orchestra":
+					orchestra = rel.Artist.Name
+				case "vocal":
+					vocals = append(vocals, rel.Artist.Name)
+				}
 			}
-			switch rel.Type {
-			case "conductor":
-				conductor = rel.Artist.Name
-			case "performing orchestra":
-				orchestra = rel.Artist.Name
-			case "vocal":
-				vocals = append(vocals, rel.Artist.Name)
+			if rel.URL != nil && spotifyURL == "" && strings.Contains(rel.URL.Resource, "spotify.com") {
+				spotifyURL = rel.URL.Resource
 			}
 		}
 		year := ""
@@ -45,7 +54,7 @@ func groupRecordings(recs []Recording) []Performance {
 		k := key{conductor, orchestra, year}
 		p, ok := byKey[k]
 		if !ok {
-			byKey[k] = &Performance{conductor, orchestra, year, vocals}
+			byKey[k] = &Performance{conductor, orchestra, year, vocals, spotifyURL}
 			order = append(order, k)
 			continue
 		}
@@ -58,6 +67,9 @@ func groupRecordings(recs []Recording) []Performance {
 				p.Vocals = append(p.Vocals, v)
 				seen[v] = true
 			}
+		}
+		if p.SpotifyURL == "" && spotifyURL != "" {
+			p.SpotifyURL = spotifyURL
 		}
 	}
 	out := make([]Performance, len(order))
