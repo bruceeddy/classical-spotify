@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/anthropics/anthropic-sdk-go"
 )
 
 const (
@@ -55,6 +58,9 @@ func main() {
 	}
 
 	works = filterMovements(works)
+	if len(works) == 0 && work != "" && llmCredsAvailable() {
+		works = tryLLMFallback(composer, work, composerMBID)
+	}
 	if len(works) == 0 {
 		fmt.Println("No works found.")
 		return
@@ -84,6 +90,38 @@ func main() {
 	}
 
 	displayPerformances(performances)
+}
+
+// tryLLMFallback asks the LLM for alternative work-search terms and
+// re-runs the MusicBrainz work search with each. Returns the first
+// non-empty result, or nil if no alternative produced matches. Errors
+// are logged to stderr and treated as an empty result.
+func tryLLMFallback(composer, work, composerMBID string) []Work {
+	fmt.Println("No direct match. Asking the LLM for canonical aliases...")
+	client := anthropic.NewClient()
+	alts, err := normalizeWorkQuery(context.Background(), client, composer, work)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: LLM normalization failed (%v)\n", err)
+		return nil
+	}
+	if len(alts) == 0 {
+		return nil
+	}
+	for _, alt := range alts {
+		altQuery := buildLuceneQueryFor(composer, alt, composerMBID)
+		fmt.Printf("Trying %q: %s\n", alt, altQuery)
+		altWorks, err := searchWorks(musicBrainzWorkURL, altQuery)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  search failed: %v\n", err)
+			continue
+		}
+		altWorks = filterMovements(altWorks)
+		if len(altWorks) > 0 {
+			fmt.Println()
+			return altWorks
+		}
+	}
+	return nil
 }
 
 // gatherRecordings browses MusicBrainz for recordings linked to each

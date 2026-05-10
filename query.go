@@ -43,6 +43,15 @@ func buildQuery(args []string, composerMBID string) string {
 	if work == "" {
 		return composer
 	}
+	return buildLuceneQueryFor(composer, work, composerMBID)
+}
+
+// buildLuceneQueryFor assembles a structured MusicBrainz Lucene query
+// from already-parsed (composer, work) plus an optional MBID for the
+// composer. Exposed so the LLM-fallback path in main can re-run the
+// query with a different work term while keeping the same composer
+// resolution.
+func buildLuceneQueryFor(composer, work, composerMBID string) string {
 	artistClause := "artist:" + luceneAndGroup(sanitizeLucene(composer))
 	if composerMBID != "" {
 		artistClause = "arid:" + composerMBID
