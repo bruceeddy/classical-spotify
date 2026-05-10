@@ -38,6 +38,17 @@ export SPOTIFY_CLIENT_SECRET=your_secret
 Without these env vars, the tool prints a one-line `Note:` to stderr
 explaining the skip and continues with MusicBrainz-only output.
 
+**Optional but useful: an Anthropic API key.** If `ANTHROPIC_API_KEY`
+is set, the tool falls back to Claude when a MusicBrainz work search
+returns nothing — Claude suggests canonical aliases (e.g. translates
+`Mass in B minor` → `h-Moll-Messe` / `BWV 232`) and the search is
+retried. Without the key the fallback is skipped and you get the same
+"No works found" you'd have got before, so this is purely additive.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-…
+```
+
 ## Usage
 
 ```bash
@@ -117,25 +128,34 @@ orchestra) won't get either.
    Entries that look like a movement (title contains `": "` or
    `" from "`, or has no top-level `type`) are filtered out so we
    get the parent work rather than its individual movements.
-3. **Edition expansion.** Classical works in MB are typically split
+3. **LLM fallback (optional).** If step 2 returned nothing AND
+   `ANTHROPIC_API_KEY` is set, Claude is asked for alternative
+   work-search terms — canonical foreign-language titles, catalog
+   numbers, common aliases. The search is retried with each suggestion
+   in turn; the first non-empty result wins. This is what lets
+   `Bach Mass in B minor` resolve via `BWV 232` / `h-Moll-Messe`
+   even though MB doesn't index the work under any of the English
+   words. Without the key the fallback is skipped and the user sees
+   the same "No works found" they would have before — purely additive.
+4. **Edition expansion.** Classical works in MB are typically split
    across several "edition" Work entities (e.g. K.427 has Maunder,
    Levin, fragment, and several reconstruction Works), connected by
    `other version` relations, and recordings link to whichever
    edition's metadata cites them. We BFS over those relations from
    each matched Work, two hops out, capped at 10 total Works, so a
    single query aggregates recordings across the whole edition family.
-4. **Recording browse.** For each Work in the expanded set, we call
+5. **Recording browse.** For each Work in the expanded set, we call
    `GET /ws/2/recording?work=<MBID>&inc=artist-credits+artist-rels+url-rels`
    to get the recordings, with one second between calls to respect
    MusicBrainz's public rate limit.
-5. **Group.** Recordings are deduplicated into Performances by
+6. **Group.** Recordings are deduplicated into Performances by
    `(conductor, orchestra, year)`. The `vocal` credits MusicBrainz
    reports are split via a name-pattern heuristic (`isChoir`) into
    choirs (named after Choir / Chor / Kantorei / Singverein /
    Kammerchor / Coro / Cappella / etc.) and individual soloists, then
    merged across movements of the same performance. Sorted
    year-descending.
-6. **Spotify URLs and labels (optional).** For each Performance we
+7. **Spotify URLs and labels (optional).** For each Performance we
    either reuse a Spotify URL the recording already had via
    MusicBrainz `url-rels`, or, if absent, fall back to a Spotify album
    search (composer + work + conductor + orchestra). Search results
@@ -156,11 +176,14 @@ public API requires.
 
 ## Tips and gotchas
 
-- **Use catalog numbers when canonical titles are translated.**
+- **Use catalog numbers if you don't have an Anthropic key.**
   MusicBrainz lists Bach's Mass in B minor under its German title
-  (`h-Moll-Messe, BWV 232`), so `./classical Bach Mass in B minor`
-  returns nothing. `./classical Bach BWV 232` and `./classical Bach
-  h-Moll-Messe` both find it.
+  (`h-Moll-Messe, BWV 232`), so a query like `Bach Mass in B minor`
+  doesn't match directly. With `ANTHROPIC_API_KEY` set the LLM
+  fallback closes this gap automatically (suggests `BWV 232` /
+  `h-Moll-Messe` and retries). Without the key, fall back to the
+  catalog number (`Bach BWV 232`) or canonical title (`Bach
+  h-Moll-Messe`) yourself — both work.
 - **Quote multi-word composer names.** `./classical Wolfgang Amadeus
   Mozart Great Mass in C` will treat "Wolfgang" as the composer surname.
   Use `./classical "Wolfgang Amadeus Mozart" "Great Mass in C"` instead.
@@ -205,6 +228,7 @@ musicbrainz.go     MB types and HTTP client (mbGet, searchWorks, browseRecording
 query.go           parseQueryArgs, buildQuery, Lucene helpers
 performance.go     Performance type, groupRecordings
 spotify.go         Spotify auth, album search, fillSpotifyURLs
+llm.go             Claude-API fallback for canonical-name normalization
 *_test.go          tests, one file per source file
 DESIGN.md          design decisions and known limitations
 ```

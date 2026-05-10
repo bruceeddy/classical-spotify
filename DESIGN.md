@@ -65,26 +65,46 @@ The CLI expects the query to identify a specific work (composer + work name).
 - (−) Ambiguous queries (e.g. "Mozart Mass in C" matches K.317 *and* K.427)
   need handling — see decision 5.
 
-### 3. Defer LLM-based query normalization
+### 3. LLM normalization on the failed-search path only
 
-**Decision.** Pass the user's query directly to MusicBrainz's search. Do not
-introduce an LLM layer for query understanding yet.
+**Decision.** Pass the user's query directly to MusicBrainz first. If the
+work search returns zero results AND `ANTHROPIC_API_KEY` is set, ask
+Claude (Opus 4.7, adaptive thinking) for alternative work-search terms
+— canonical foreign-language titles, catalog numbers, common aliases —
+and retry the MB search with each. The first non-empty alternative
+wins. The LLM is never on the happy path; queries that work directly
+(catalog-number queries, exact-canonical-title queries) bypass it
+entirely.
+
+This "deferred" decision was reframed in increment 7 — we ship LLM
+normalization, but only as a fallback, not as a frontline step.
 
 **Alternatives considered.**
-- *LLM-only pipeline* (skip MusicBrainz). The LLM both normalizes the query
-  and identifies recordings. Rejected: no stable identity layer, will
-  hallucinate edge-case recordings, and is bounded by training cutoff.
-- *Hybrid with LLM upfront.* The LLM extracts `{composer, work, catalog
-  number}` from free-text and MusicBrainz looks up the rest. Likely the right
-  long-term shape, but adds a dependency before we know whether MB's own
-  fuzzy search is good enough.
+- *Always run the LLM upfront.* Extracts `{composer, work, catalog}`
+  from the user's free-text and uses the structured fields to query
+  MB. Rejected: pays the LLM cost and latency on every query when
+  most queries already work without it. The fallback shape only pays
+  when free-text fails.
+- *LLM-only pipeline* (skip MusicBrainz). The LLM both normalizes
+  *and* identifies recordings. Rejected: no stable identity layer,
+  hallucinates edge-case recordings, bounded by training cutoff.
 
 **Trade-offs.**
-- (+) Zero new dependencies for the first version. We can measure how often
-  MB's search alone fails before paying for an LLM.
-- (−) MB's Lucene-style search will struggle on multilingual / colloquial
-  names ("Krönungsmesse", "St Matthew Passion" vs "Matthäus-Passion"). We
-  accept this for the first version.
+- (+) Closes the worst case of the multilingual-name gap: queries
+  like "Bach Mass in B minor" now resolve via "BWV 232" / "h-Moll-
+  Messe" suggestions when the original returns nothing.
+- (+) Zero cost on queries that already work — fallback only fires
+  on a known empty result.
+- (+) Graceful degradation when `ANTHROPIC_API_KEY` is unset: the
+  tool prints the same "No works found." as before.
+- (−) Adds a dependency on the Anthropic SDK and another optional
+  API credential.
+- (−) The LLM may suggest plausible-but-fake catalog numbers or
+  hallucinated alias forms. Those produce zero MB results and the
+  fallback simply moves on, but they pay LLM tokens for no gain.
+- (−) Adds 1–3 seconds of latency to genuinely-empty queries (the
+  ones that found nothing in MB and have no LLM-reachable
+  alternative either).
 
 ### 4. Replace Spotify track search; don't preserve it
 
@@ -161,12 +181,17 @@ Things we've observed or accepted as trade-offs in the current
 implementation. Listed centrally so future work can pick them up
 explicitly.
 
-- **Multilingual / colloquial work titles.** A query like `Bach Mass in B
-  minor` returns no results because MB's canonical title for that work is
-  `h-Moll-Messe, BWV 232` and none of the English words appear in it.
-  Workarounds: use the catalog number (`Bach BWV 232`) or the canonical
-  title (`Bach h-Moll-Messe`). The long-term fix is the deferred LLM
-  normalization layer (decision 3).
+- **Multilingual / colloquial work titles, residual gaps.** Increment 7
+  closed the worst case via the LLM fallback (see decision 3): when a
+  work search returns zero results, Claude is asked for canonical
+  aliases and the search is retried. `Bach Mass in B minor` now
+  resolves via `BWV 232` / `h-Moll-Messe` suggestions. Residual gaps:
+  (a) without `ANTHROPIC_API_KEY` set the fallback is a no-op and the
+  user still sees "No works found"; (b) the LLM may hallucinate
+  plausible-looking but non-existent titles, which produce zero MB
+  results and add a few seconds of latency for nothing; (c) the
+  fallback only fires on *empty* MB results — a query that returns
+  irrelevant results (rather than zero) won't trigger it.
 - **Cross-edition aggregation, residual gaps.** Increment 4 closed the
   worst version of this limitation by walking MB's `other version`
   relations two hops out and aggregating recordings across the

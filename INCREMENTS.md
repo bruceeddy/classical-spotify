@@ -145,6 +145,32 @@ Goossens / LSO (Everest), and several Sony Classical releases.
 
 Commit: `847b7f2`.
 
+### 7. LLM fallback for canonical-name work-query mismatches
+
+Closes the worst case of the multilingual work-title gap noted in
+`DESIGN.md`'s known limitations. MB indexes works under their original-
+language canonical title, so an English query like `Bach Mass in B
+minor` returned zero results because MB has it as `h-Moll-Messe, BWV
+232`. Increment 7 adds an LLM-fallback step: when the initial work
+search returns zero results AND `ANTHROPIC_API_KEY` is set, Claude
+(Opus 4.7, adaptive thinking) is asked for alternative work-search
+terms — canonical foreign-language titles, catalog numbers, common
+aliases — and the search is retried with each. The first non-empty
+alternative wins.
+
+The LLM is never on the happy path: queries that work directly
+(catalog-number queries, exact-canonical-title queries, queries the
+composer-MBID resolution from increment 6 already handles) bypass it
+entirely. Without `ANTHROPIC_API_KEY` set the fallback is skipped and
+the user sees "No works found" exactly as before — no regression.
+
+Implementation uses the official Anthropic Go SDK
+(`github.com/anthropics/anthropic-sdk-go`), added as a dependency.
+Tests are hermetic via `httptest` + `option.WithBaseURL` to inject the
+test server URL into the SDK client.
+
+Commit: `3f91904`.
+
 ## Cross-cutting
 
 Alongside the numbered increments:
@@ -165,25 +191,23 @@ Alongside the numbered increments:
 
 Reasonable next directions:
 
-1. **LLM query normalization** (deferred per decision 3 in `DESIGN.md`).
-   Most-impactful remaining limitation: would fix `Bach Mass in B minor`
-   returning nothing because MusicBrainz's canonical work title is
-   `h-Moll-Messe` (composer resolution from increment 6 closes the
-   composer-side equivalent of this gap, but the work side remains).
-   Adds a third optional credential (`ANTHROPIC_API_KEY`) and one
-   external network call per query.
-2. **Refine composer-disambiguation heuristic.** Composers whose MB
+1. **Refine composer-disambiguation heuristic.** Composers whose MB
    `disambiguation` is empty or doesn't include "composer" don't
    resolve via `resolveComposerMBID` and fall back to free-text. Could
    refine by adding a tier-2 fallback (first Person if no composer-
    disambiguated Person exists), or by checking work-count signals.
-3. **More display polish.** Truncate long soloist lists; add a `-v`
+2. **More display polish.** Truncate long soloist lists; add a `-v`
    flag for verbose vs compact output; colorise headings; visually
    group the Works section into "matched" vs "reached via expansion".
-4. **Recover URLs for sparsely-credited performances.** Extend
+3. **Recover URLs for sparsely-credited performances.** Extend
    `albumMatchScore` to also match against soloist names (or use
    Spotify's stricter DSL with retries), so recordings credited only
    to soloists can still get a verified Spotify URL.
+4. **Extend the LLM fallback's reach.** Currently the fallback fires
+   only on *empty* MB results. Queries that return *irrelevant* hits
+   (rather than zero) won't trigger it. Could extend by also asking
+   the LLM when the top result's score is below a threshold, or by
+   running it always for cost-tolerant deployments.
 5. **Cross into "Out of scope."** Playback (Spotify Player API + user
    OAuth, authorization-code flow rather than client-credentials) or
    playlist creation. Bigger lift, different auth shape.
