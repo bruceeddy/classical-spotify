@@ -101,10 +101,13 @@ func searchWorks(baseURL, query string) ([]Work, error) {
 	params.Add("fmt", "json")
 	params.Add("limit", "25")
 
+	start := time.Now()
 	var resp WorkSearchResponse
 	if err := mbGet(baseURL+"?"+params.Encode(), &resp); err != nil {
+		verbosef("MB work search %q: error after %dms — %v", query, time.Since(start).Milliseconds(), err)
 		return nil, err
 	}
+	verbosef("MB work search %q: %d results in %dms", query, len(resp.Works), time.Since(start).Milliseconds())
 	return resp.Works, nil
 }
 
@@ -115,10 +118,13 @@ func browseRecordingsByWork(baseURL, workID string) ([]Recording, error) {
 	params.Add("inc", "artist-credits artist-rels url-rels")
 	params.Add("limit", "100")
 
+	start := time.Now()
 	var resp RecordingBrowseResponse
 	if err := mbGet(baseURL+"?"+params.Encode(), &resp); err != nil {
+		verbosef("MB browse recordings work=%s: error after %dms — %v", workID, time.Since(start).Milliseconds(), err)
 		return nil, err
 	}
+	verbosef("MB browse recordings work=%s: %d recordings in %dms", workID, len(resp.Recordings), time.Since(start).Milliseconds())
 	return resp.Recordings, nil
 }
 
@@ -164,15 +170,23 @@ func resolveComposerMBID(baseURL, name string) (string, error) {
 	params.Add("fmt", "json")
 	params.Add("limit", "5")
 
+	start := time.Now()
 	var resp ArtistSearchResponse
 	if err := mbGet(baseURL+"?"+params.Encode(), &resp); err != nil {
+		verbosef("MB composer resolve %q: error after %dms — %v", name, time.Since(start).Milliseconds(), err)
 		return "", err
+	}
+	verbosef("MB composer resolve %q: %d candidates in %dms", name, len(resp.Artists), time.Since(start).Milliseconds())
+	for _, a := range resp.Artists {
+		verbosef("  - %s  type=%s  score=%d  disambig=%q", a.Name, a.Type, a.Score, a.Disambiguation)
 	}
 	for _, a := range resp.Artists {
 		if a.Type == "Person" && isComposerDisambiguation(a.Disambiguation) {
+			verbosef("  → picked %s (%s)", a.Name, a.ID)
 			return a.ID, nil
 		}
 	}
+	verbosef("  → no Person+composer match; falling back to free-text artist:%s", name)
 	return "", nil
 }
 
@@ -207,8 +221,10 @@ func lookupWorkOtherVersions(baseURL, workID string) ([]Work, error) {
 	params.Add("fmt", "json")
 	params.Add("inc", "work-rels")
 
+	start := time.Now()
 	var w Work
 	if err := mbGet(baseURL+workID+"?"+params.Encode(), &w); err != nil {
+		verbosef("MB work-rels lookup %s: error after %dms — %v", workID, time.Since(start).Milliseconds(), err)
 		return nil, err
 	}
 	var siblings []Work
@@ -217,6 +233,7 @@ func lookupWorkOtherVersions(baseURL, workID string) ([]Work, error) {
 			siblings = append(siblings, *rel.Work)
 		}
 	}
+	verbosef("MB work-rels lookup %s (%q): %d other-version siblings in %dms", workID, w.Title, len(siblings), time.Since(start).Milliseconds())
 	return siblings, nil
 }
 
@@ -244,6 +261,7 @@ func expandEditions(baseURL string, initial []Work, maxHops, maxExpanded int, sl
 	frontier := append([]Work(nil), expanded...)
 	calls := 0
 	for hop := 0; hop < maxHops && len(frontier) > 0 && len(expanded) < maxExpanded; hop++ {
+		verbosef("edition expansion hop %d: %d frontier work(s), %d total expanded", hop+1, len(frontier), len(expanded))
 		var next []Work
 		for _, w := range frontier {
 			if len(expanded) >= maxExpanded {

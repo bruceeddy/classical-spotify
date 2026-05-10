@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -55,8 +56,10 @@ func spotifyToken(authURL, clientID, clientSecret string) (string, error) {
 	req.Header.Set("Authorization", "Basic "+auth)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
+	start := time.Now()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		verbosef("Spotify auth: error after %dms — %v", time.Since(start).Milliseconds(), err)
 		return "", err
 	}
 	defer resp.Body.Close()
@@ -67,12 +70,14 @@ func spotifyToken(authURL, clientID, clientSecret string) (string, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		verbosef("Spotify auth: HTTP %d in %dms", resp.StatusCode, time.Since(start).Milliseconds())
 		return "", fmt.Errorf("spotify auth failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var tr spotifyTokenResponse
 	if err := json.Unmarshal(body, &tr); err != nil {
 		return "", err
 	}
+	verbosef("Spotify auth: ok in %dms", time.Since(start).Milliseconds())
 	return tr.AccessToken, nil
 }
 
@@ -90,6 +95,7 @@ func searchSpotifyAlbums(searchURL, token, query string) ([]SpotifyAlbum, error)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
+	start := time.Now()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -102,12 +108,14 @@ func searchSpotifyAlbums(searchURL, token, query string) ([]SpotifyAlbum, error)
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		verbosef("Spotify album search %q: HTTP %d in %dms", query, resp.StatusCode, time.Since(start).Milliseconds())
 		return nil, fmt.Errorf("spotify search failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var sr SpotifyAlbumSearchResponse
 	if err := json.Unmarshal(body, &sr); err != nil {
 		return nil, err
 	}
+	verbosef("Spotify album search %q: %d candidates in %dms", query, len(sr.Albums.Items), time.Since(start).Milliseconds())
 	return sr.Albums.Items, nil
 }
 
@@ -145,17 +153,26 @@ func albumMatchScore(alb SpotifyAlbum, p Performance) int {
 // callers should leave the SpotifyURL empty in that case rather than
 // attaching a wrong URL.
 func bestMatchingAlbum(albums []SpotifyAlbum, p Performance) (SpotifyAlbum, bool) {
+	verbosef("verifying %d Spotify candidate(s) for %s/%s/%s", len(albums), p.Conductor, p.Orchestra, p.Year)
 	bestScore := 0
 	var best SpotifyAlbum
 	for _, alb := range albums {
-		if s := albumMatchScore(alb, p); s > bestScore {
-			bestScore = s
+		score := albumMatchScore(alb, p)
+		var artists []string
+		for _, a := range alb.Artists {
+			artists = append(artists, a.Name)
+		}
+		verbosef("  score=%d  album=%q  artists=%v", score, alb.Name, artists)
+		if score > bestScore {
+			bestScore = score
 			best = alb
 		}
 	}
 	if bestScore == 0 {
+		verbosef("  → no candidate verified; leaving SpotifyURL empty")
 		return SpotifyAlbum{}, false
 	}
+	verbosef("  → picked %q (score=%d)", best.Name, bestScore)
 	return best, true
 }
 
@@ -182,6 +199,7 @@ func getSpotifyAlbumLabels(albumsURL, token string, ids []string) (map[string]st
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
+	start := time.Now()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -209,6 +227,7 @@ func getSpotifyAlbumLabels(albumsURL, token string, ids []string) (map[string]st
 	for _, a := range r.Albums {
 		out[a.ID] = a.Label
 	}
+	verbosef("Spotify album labels lookup: %d ids → %d labels in %dms", len(ids), len(out), time.Since(start).Milliseconds())
 	return out, nil
 }
 

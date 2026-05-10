@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )
@@ -55,6 +56,17 @@ Output JSON ONLY in this exact shape, no surrounding prose:
 If you can't suggest anything useful, return {"alternatives": []}.`,
 		composer, work, llmMaxAlternates, composer, work)
 
+	entry := LLMLogEntry{
+		Time:     time.Now(),
+		Composer: composer,
+		Work:     work,
+		Model:    string(llmModel),
+		Prompt:   prompt,
+	}
+	defer func() { logLLMCall(entry) }()
+
+	verbosef("LLM normalize: composer=%q work=%q (model=%s)", composer, work, llmModel)
+	start := time.Now()
 	resp, err := client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     llmModel,
 		MaxTokens: llmMaxTokens,
@@ -65,7 +77,9 @@ If you can't suggest anything useful, return {"alternatives": []}.`,
 			anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)),
 		},
 	})
+	entry.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
+		entry.Error = err.Error()
 		return nil, fmt.Errorf("anthropic call: %w", err)
 	}
 
@@ -76,12 +90,20 @@ If you can't suggest anything useful, return {"alternatives": []}.`,
 		}
 	}
 	text = strings.TrimSpace(text)
+	entry.Response = text
+	entry.InputTokens = resp.Usage.InputTokens
+	entry.OutputTokens = resp.Usage.OutputTokens
+	addLLMUsage(entry.InputTokens, entry.OutputTokens)
+	verbosef("LLM normalize done: %dms, %d in / %d out tokens", entry.LatencyMS, entry.InputTokens, entry.OutputTokens)
+
 	if text == "" {
+		entry.Error = "no text content"
 		return nil, fmt.Errorf("LLM returned no text content")
 	}
 
 	var out workAlternativesResponse
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		entry.Error = fmt.Sprintf("parse: %v", err)
 		return nil, fmt.Errorf("could not parse LLM JSON: %v (raw response: %q)", err, text)
 	}
 

@@ -29,15 +29,23 @@ const (
 )
 
 func main() {
+	verboseFlag := flag.Bool("v", false, "verbose pipeline trace to stderr")
 	flag.Parse()
 	args := flag.Args()
 
 	if len(args) == 0 {
-		fmt.Println("Usage: classical <composer> <work>")
+		fmt.Println("Usage: classical [-v] <composer> <work>")
 		fmt.Println("Example: classical Mozart Great Mass in C")
 		fmt.Println("Example: classical \"Wolfgang Amadeus Mozart\" \"Great Mass in C\"")
 		os.Exit(1)
 	}
+
+	startTime = time.Now()
+	if *verboseFlag {
+		verboseWriter = os.Stderr
+	}
+	defer closeLLMLog()
+	defer printRunSummary()
 
 	composer, work := parseQueryArgs(args)
 	composerMBID := ""
@@ -90,6 +98,22 @@ func main() {
 	}
 
 	displayPerformances(performances)
+}
+
+// printRunSummary writes a one-line stderr summary at exit: total
+// elapsed time and (if any LLM call was made) Claude token usage.
+// Always-on; cheap; gives the user visibility into cost without
+// requiring -v.
+func printRunSummary() {
+	if startTime.IsZero() {
+		return // exited before timing was set up
+	}
+	elapsed := time.Since(startTime).Round(time.Millisecond)
+	if llmInputTokens > 0 || llmOutputTokens > 0 {
+		fmt.Fprintf(os.Stderr, "\nDone in %s (Claude: %d in / %d out tokens)\n", elapsed, llmInputTokens, llmOutputTokens)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\nDone in %s\n", elapsed)
 }
 
 // tryLLMFallback asks the LLM for alternative work-search terms and
