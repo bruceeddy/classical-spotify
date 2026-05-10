@@ -206,6 +206,50 @@ public API requires.
 For the full design rationale and the complete list of known
 limitations, see [`DESIGN.md`](DESIGN.md).
 
+## Observability
+
+Three things land for free; one is opt-in:
+
+**End-of-run summary (always on).** One stderr line at exit, e.g.
+`Done in 2.99s` or — when an LLM call happened —
+`Done in 8.4s (Claude: 350 in / 52 out tokens)`. Quick visibility
+into Claude cost without grep.
+
+**LLM call log (always on, JSONL).** Every Claude call writes one
+JSON object to `./classical.jsonl` containing the timestamp, composer,
+work, full prompt, full response text, model, input/output tokens,
+latency, and any error. The file is lazily created on first call, so
+runs that don't hit Claude don't produce one. Override the path with
+`CLASSICAL_LOG_FILE` if you want it elsewhere. Nothing rotates the
+file — manage it yourself for long-running use.
+
+```bash
+$ jq . classical.jsonl
+{"time":"2026-05-10T01:58:29Z","composer":"Bach","work":"Mass in B minor",
+ "model":"claude-opus-4-7","prompt":"...","response":"{\"alternatives\":[\"BWV 232\",\"h-Moll-Messe\",\"Messe in h-Moll\",\"Hohe Messe\"]}",
+ "input_tokens":350,"output_tokens":52,"latency_ms":5161}
+```
+
+**Verbose pipeline trace (`-v`, opt-in).** Adds an elapsed-time-prefixed
+line per pipeline stage to stderr: every MusicBrainz call (composer
+resolution with all candidates, work search, work-rels lookup,
+recording browse) and every Spotify call (auth, album search with
+match-score per candidate, label batch). Useful for diagnosing slow
+queries or unexpected results without code changes.
+
+```bash
+$ ./classical -v Bach Mass in B minor 2> trace.log
+[ 495ms] MB composer resolve "Bach": 5 candidates in 495ms
+[ 495ms]   - Johann Sebastian Bach  type=Person  score=100  disambig="German Baroque period composer & musician"
+[ 495ms]   - Carl Philipp Emanuel Bach  type=Person  score=82  disambig="German classical composer"
+[ 495ms]   → picked Johann Sebastian Bach (24f1766e-…)
+…
+[7.467s] verifying 10 Spotify candidate(s) for René Jacobs/Akademie für Alte Musik Berlin/2007
+[7.467s]   score=3  album="Bach: Mass in B Minor, BWV 232"  artists=[Johann Sebastian Bach René Jacobs …]
+[7.467s]   score=0  album="Celestial Bliss"  artists=[Felix Lancaster]
+[7.467s]   → picked "Bach: Mass in B Minor, BWV 232" (score=3)
+```
+
 ## Running the tests
 
 ```bash
@@ -229,6 +273,7 @@ query.go           parseQueryArgs, buildQuery, Lucene helpers
 performance.go     Performance type, groupRecordings
 spotify.go         Spotify auth, album search, fillSpotifyURLs
 llm.go             Claude-API fallback for canonical-name normalization
+logging.go         JSONL LLM log, verbose pipeline trace, run summary
 *_test.go          tests, one file per source file
 DESIGN.md          design decisions and known limitations
 ```

@@ -171,6 +171,45 @@ test server URL into the SDK client.
 
 Commit: `3f91904`.
 
+### 8. Observability
+
+Adds five observability surfaces so the user can audit Claude usage,
+diagnose latency, and debug Spotify match scoring without adding
+print statements.
+
+1. **LLM call log (always-on JSONL).** Every call to
+   `normalizeWorkQuery` writes a structured entry — timestamp,
+   composer, work, full prompt, response text, model, input/output
+   tokens, latency, error — to `./classical.jsonl`. Path overridable
+   via `CLASSICAL_LOG_FILE`. Lazily opened on first call, so the
+   file never appears for users without an Anthropic key.
+2. **`-v` pipeline trace (stderr).** Each pipeline stage prints
+   timing and result counts: composer-MBID resolution (with all
+   candidate artists, type, score, disambiguation), MB work search,
+   edition expansion (per hop), recording browse, Spotify auth /
+   search / label batch — each line prefixed with elapsed-since-
+   startup so the user can see where time is going.
+3. **End-of-run summary (always on).** One stderr line at exit:
+   `Done in 2.99s` or, when an LLM call happened,
+   `Done in 8.4s (Claude: 350 in / 52 out tokens)`. Surfaces cost
+   without grep.
+4. **Spotify match-score trace (under `-v`).** `bestMatchingAlbum`
+   logs every candidate album with its score and artist list, then
+   the picked album or a clear "no candidate verified" line. Would
+   have flagged the Celestial-Bliss / Rain-Sounds-Symphony failures
+   at runtime instead of click-through-and-discover.
+5. **Composer-resolution trace (under `-v`).** `resolveComposerMBID`
+   logs all artist candidates with their disambiguation strings so
+   the user can see surprises like J.S. Bach vs C.P.E. Bach being
+   picked.
+
+Implementation: new `logging.go` (~80 LOC) plus light instrumentation
+in each per-API-call function. Tests redirect both writers to
+`bytes.Buffer` so the suite never touches the real filesystem or
+stderr.
+
+Commit: `2c169e1`.
+
 ## Cross-cutting
 
 Alongside the numbered increments:
@@ -196,9 +235,11 @@ Reasonable next directions:
    resolve via `resolveComposerMBID` and fall back to free-text. Could
    refine by adding a tier-2 fallback (first Person if no composer-
    disambiguated Person exists), or by checking work-count signals.
-2. **More display polish.** Truncate long soloist lists; add a `-v`
-   flag for verbose vs compact output; colorise headings; visually
-   group the Works section into "matched" vs "reached via expansion".
+2. **More display polish.** Truncate long soloist lists; colorise
+   headings; visually group the Works section into "matched" vs
+   "reached via expansion". (The verbose-mode plumbing from increment
+   8 covers the diagnostics use case; this is purely the
+   user-facing-display side.)
 3. **Recover URLs for sparsely-credited performances.** Extend
    `albumMatchScore` to also match against soloist names (or use
    Spotify's stricter DSL with retries), so recordings credited only
@@ -208,7 +249,12 @@ Reasonable next directions:
    (rather than zero) won't trigger it. Could extend by also asking
    the LLM when the top result's score is below a threshold, or by
    running it always for cost-tolerant deployments.
-5. **Cross into "Out of scope."** Playback (Spotify Player API + user
+5. **Observability follow-ups.** Log rotation (the JSONL file grows
+   indefinitely); cost-in-dollars in the end-of-run summary
+   (currently shows tokens only); per-call MB / Spotify request logs
+   to file (only LLM calls are file-logged today — `-v` covers the
+   stderr side).
+6. **Cross into "Out of scope."** Playback (Spotify Player API + user
    OAuth, authorization-code flow rather than client-credentials) or
    playlist creation. Bigger lift, different auth shape.
 

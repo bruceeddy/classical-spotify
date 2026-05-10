@@ -175,6 +175,39 @@ to a Mozart Mass performance because the album name happened to contain
 **Decision.** Dedupe Recordings by `(conductor, ensemble, year)` and sort by
 year descending. Catalog number remains the join key through the pipeline.
 
+### 8. Observability: always-on LLM log, opt-in verbose elsewhere
+
+**Decision.** Every call to the LLM writes a structured JSONL entry
+(timestamp, composer, work, full prompt, full response text, model,
+input/output tokens, latency, error) to `./classical.jsonl` — always
+on, no flag required. Path is overridable via the `CLASSICAL_LOG_FILE`
+env var. The pipeline trace for MusicBrainz / Spotify / composer
+resolution / Spotify match scoring is opt-in behind a `-v` flag and
+goes to stderr. An end-of-run summary line (`Done in 2.99s` or
+`Done in 8.4s (Claude: 350 in / 52 out tokens)`) is always printed.
+
+**Why this split.**
+- *LLM calls cost money and are an audit-trail concern.* The user
+  should always have a record of what was asked and what came back —
+  not just for cost reconciliation but for spotting hallucinated
+  alternative titles after the fact. We don't want this gated behind a
+  flag the user has to remember to set.
+- *Pipeline trace is debugging output.* Useful when a query is slow
+  or surfaces an unexpected result, but noise on a successful run.
+  Opt-in behind `-v`.
+- *End-of-run summary is too cheap not to leave on.* One line.
+
+**Trade-offs.**
+- (+) Zero-config audit trail for LLM use; user can `jq` the JSONL
+  file at any time.
+- (+) `-v` reveals latency at every layer — the user can diagnose a
+  slow query without code changes.
+- (−) The JSONL file accumulates indefinitely with no rotation; the
+  user is on the hook for managing it. Fine for personal use; would
+  matter for a long-running service.
+- (−) The summary tracks tokens, not dollars. The user has to know
+  the per-million-token rate to convert.
+
 ## Known limitations
 
 Things we've observed or accepted as trade-offs in the current
